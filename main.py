@@ -11,8 +11,20 @@ from flask import (
 
 from config import FLASK_HOST, FLASK_PORT, TEMP_DIR
 
+# ── Setup ffmpeg (Vercel / environnements sans ffmpeg système) ───
+def _setup_ffmpeg():
+    if not shutil.which("ffmpeg"):
+        try:
+            os.environ.setdefault("STATIC_FFMPEG_PATH", os.path.join(TEMP_DIR, "ffmpeg_bin"))
+            import static_ffmpeg
+            static_ffmpeg.add_paths()
+        except Exception:
+            pass
+
+_setup_ffmpeg()
+
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB upload max
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 
 def check_dependencies():
@@ -209,4 +221,5 @@ if __name__ == "__main__":
     print(f"   Local  : http://localhost:{FLASK_PORT}")
     print(f"   Réseau : http://{local_ip}:{FLASK_PORT}\n")
 
-    app.run(host=FLASK_HOST, port=FLASK_PORT, threaded=True, debug=False)
+    port = int(os.environ.get("PORT", FLASK_PORT))
+    app.run(host=FLASK_HOST, port=port, threaded=True, debug=False)
