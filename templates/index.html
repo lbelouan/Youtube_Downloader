@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>YT Downloader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+{% if missing_deps %}
+<div class="dep-error-overlay">
+  <div class="dep-error-card">
+    <div class="dep-error-icon">⚠️</div>
+    <h2>Dépendances manquantes</h2>
+    <p>Les outils suivants sont requis :</p>
+    <ul>{% for dep in missing_deps %}<li><code>{{ dep }}</code></li>{% endfor %}</ul>
+    <div class="dep-error-install">
+      <p><strong>macOS :</strong></p>
+      <code>brew install ffmpeg yt-dlp</code>
+    </div>
+    <p class="dep-error-note">Relancez après installation.</p>
+  </div>
+</div>
+{% endif %}
+
+<!-- Header -->
+<header class="app-header">
+  <div class="container header-inner">
+    <div class="header-brand">
+      <!-- Logo YouTube-like -->
+      <svg class="brand-icon" viewBox="0 0 90 63" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="90" height="63" rx="14" fill="#FF0000"/>
+        <polygon points="36,18 36,45 62,31.5" fill="white"/>
+      </svg>
+      <span class="brand-name">YT Downloader</span>
+    </div>
+    <button class="btn-theme" id="btnTheme" title="Changer de thème" aria-label="Toggle theme">
+      🌙
+    </button>
+  </div>
+</header>
+
+<!-- Onglets desktop -->
+<div class="top-tabs-wrapper">
+  <div class="container">
+    <nav class="top-tabs" id="topTabs">
+      <button class="tab-btn active" data-tab="download">
+        <i data-lucide="download"></i><span>Télécharger</span>
+      </button>
+      <button class="tab-btn" data-tab="queue">
+        <i data-lucide="list-ordered"></i><span>File d'attente</span>
+        <span class="queue-badge" id="queueBadge" style="display:none">0</span>
+      </button>
+      <button class="tab-btn" data-tab="assemble">
+        <i data-lucide="scissors"></i><span>Assembler</span>
+      </button>
+    </nav>
+  </div>
+</div>
+
+<main class="main-content">
+  <div class="container">
+
+    <!-- ══════════════════════════════════════
+         ONGLET 1 — TÉLÉCHARGEMENT
+    ══════════════════════════════════════ -->
+    <section class="tab-panel active" id="tab-download">
+      <div class="card">
+        <div class="card-header">
+          <i data-lucide="download-cloud"></i>
+          <h2>Nouveau téléchargement</h2>
+        </div>
+
+        <!-- URL -->
+        <div class="form-group">
+          <label class="form-label" for="videoUrl">URL YouTube <span class="required">*</span></label>
+          <div class="input-with-btn">
+            <input type="url" id="videoUrl" class="form-input"
+              placeholder="https://youtube.com/watch?v=..."
+              autocomplete="off" spellcheck="false">
+            <button class="btn-secondary btn-preview" id="btnPreview">
+              <i data-lucide="search"></i><span>Prévisualiser</span>
+            </button>
+          </div>
+          <span class="field-error" id="urlError"></span>
+        </div>
+
+        <!-- Aperçu -->
+        <div class="preview-block" id="previewBlock" style="display:none">
+          <div class="preview-inner">
+            <img class="preview-thumb" id="previewThumb" src="" alt="">
+            <div class="preview-info">
+              <div class="preview-title" id="previewTitle"></div>
+              <div class="preview-meta">
+                <span id="previewDuration"><i data-lucide="clock-3"></i> --:--</span>
+                <span id="previewRes"><i data-lucide="monitor"></i> --</span>
+                <span id="previewAudio"><i data-lucide="volume-2"></i> AAC</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timecodes -->
+        <div class="timecode-row">
+          <div class="form-group">
+            <label class="form-label">
+              <i data-lucide="play-circle"></i> Début
+              <span class="form-hint">(optionnel)</span>
+            </label>
+            <div class="tc-wrapper" id="tcStartWrapper">
+              <div class="tc-display empty" id="tcStartDisplay" tabindex="0">
+                <i data-lucide="clock"></i>
+                <span id="tcStartText">Début de la vidéo</span>
+              </div>
+              <div class="tc-popover" id="tcStartPopover">
+                <div class="tc-spinners">
+                  <div class="tc-spin">
+                    <button class="tc-spin-btn" data-spin="start-h" data-dir="up">▲</button>
+                    <input class="tc-spin-input" type="number" id="tcStartH" min="0" max="23" value="0">
+                    <button class="tc-spin-btn" data-spin="start-h" data-dir="down">▼</button>
+                    <span class="tc-spin-label">h</span>
+                  </div>
+                  <span class="tc-sep">:</span>
+                  <div class="tc-spin">
+                    <button class="tc-spin-btn" data-spin="start-m" data-dir="up">▲</button>
+                    <input class="tc-spin-input" type="number" id="tcStartM" min="0" max="59" value="0">
+                    <button class="tc-spin-btn" data-spin="start-m" data-dir="down">▼</button>
+                    <span class="tc-spin-label">m</span>
+                  </div>
+                  <span class="tc-sep">:</span>
+                  <div class="tc-spin">
+                    <button class="tc-spin-btn" data-spin="start-s" data-dir="up">▲</button>
+                    <input class="tc-spin-input" type="number" id="tcStartS" min="0" max="59" value="0">
+                    <button class="tc-spin-btn" data-spin="start-s" data-dir="down">▼</button>
+                    <span class="tc-spin-label">s</span>
+                  </div>
+                </div>
+                <div class="tc-popover-footer">
+                  <button class="tc-btn-clear" id="tcStartClear">Effacer</button>
+                  <button class="tc-btn-ok" id="tcStartOk">OK</button>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" id="tcStart">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">
+              <i data-lucide="stop-circle"></i> Fin
+              <span class="form-hint">(optionnel)</span>
+            </label>
+            <div class="tc-wrapper" id="tcEndWrapper">
+              <div class="tc-display empty" id="tcEndDisplay" tabindex="0">
+                <i data-lucide="clock"></i>
+                <span id="tcEndText">Fin de la vidéo</span>
+              </div>
+              <div class="tc-popover" id="tcEndPopover">
+                <div class="tc-spinners">
+                  <div class="tc-spin">
+                    <button class="tc-spin-btn" data-spin="end-h" data-dir="up">▲</button>
+                    <input class="tc-spin-input" type="number" id="tcEndH" min="0" max="23" value="0">
+                    <button class="tc-spin-btn" data-spin="end-h" data-dir="down">▼</button>
+                    <span class="tc-spin-label">h</span>
+                  </div>
+                  <span class="tc-sep">:</span>
+                  <div class="tc-spin">
+                    <button class="tc-spin-btn" data-spin="end-m" data-dir="up">▲</button>
+                    <input class="tc-spin-input" type="number" id="tcEndM" min="0" max="59" value="0">
+                    <button class="tc-spin-btn" data-spin="end-m" data-dir="down">▼</button>
+                    <span class="tc-spin-label">m</span>
+                  </div>
+                  <span class="tc-sep">:</span>
+                  <div class="tc-spin">
+                    <button class="tc-spin-btn" data-spin="end-s" data-dir="up">▲</button>
+                    <input class="tc-spin-input" type="number" id="tcEndS" min="0" max="59" value="0">
+                    <button class="tc-spin-btn" data-spin="end-s" data-dir="down">▼</button>
+                    <span class="tc-spin-label">s</span>
+                  </div>
+                </div>
+                <div class="tc-popover-footer">
+                  <button class="tc-btn-clear" id="tcEndClear">Effacer</button>
+                  <button class="tc-btn-ok" id="tcEndOk">OK</button>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" id="tcEnd">
+          </div>
+        </div>
+        <span class="field-error" id="tcError"></span>
+
+        <!-- Nom fichier -->
+        <div class="form-group">
+          <label class="form-label" for="fileName">Nom du fichier <span class="form-hint">(optionnel)</span></label>
+          <input type="text" id="fileName" class="form-input" placeholder="extrait_01">
+        </div>
+
+        <!-- Mode de découpe -->
+        <div class="form-group">
+          <label class="form-label">Mode de découpe</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="cutMode" value="fast" checked>
+              <div class="radio-content">
+                <span class="radio-label">Rapide</span>
+                <span class="radio-desc">Keyframe — sans réencodage</span>
+              </div>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="cutMode" value="precise">
+              <div class="radio-content">
+                <span class="radio-label">Précis</span>
+                <span class="radio-desc">Réencodage léger — fidèle au timecode</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="action-row">
+          <button class="btn-secondary" id="btnAddQueue">
+            <i data-lucide="plus-circle"></i>Ajouter à la file
+          </button>
+          <button class="btn-primary" id="btnDownloadNow">
+            <i data-lucide="download"></i>Télécharger maintenant
+          </button>
+        </div>
+
+        <!-- Progression inline -->
+        <div class="progress-section" id="dlProgressSection" style="display:none">
+          <div class="progress-header">
+            <span class="progress-label-text">Progression</span>
+            <span class="progress-pct" id="dlProgressPct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill running" id="dlProgressFill" style="width:0%"></div>
+          </div>
+          <div class="log-console" id="dlLog">
+            <span class="log-placeholder">En attente...</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         ONGLET 2 — FILE D'ATTENTE
+    ══════════════════════════════════════ -->
+    <section class="tab-panel" id="tab-queue">
+      <div class="card">
+        <div class="card-header queue-header">
+          <div class="card-header-left">
+            <i data-lucide="list-ordered"></i>
+            <h2>File d'attente</h2>
+          </div>
+          <div class="card-header-actions">
+            <button class="btn-ghost btn-sm" id="btnClearQueue">
+              <i data-lucide="trash-2"></i><span>Vider</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="queueList">
+          <div class="empty-state">
+            <i data-lucide="inbox"></i>
+            <p>La file est vide.</p>
+            <p class="empty-hint">Ajoutez des vidéos depuis l'onglet Télécharger.</p>
+          </div>
+        </div>
+
+        <div class="queue-footer">
+          <button class="btn-secondary" id="btnGoDownload">
+            <i data-lucide="plus"></i>Ajouter une tâche
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         ONGLET 3 — ASSEMBLAGE
+    ══════════════════════════════════════ -->
+    <section class="tab-panel" id="tab-assemble">
+      <div class="card">
+        <div class="card-header">
+          <i data-lucide="scissors"></i>
+          <h2>Assembler des extraits</h2>
+        </div>
+
+        <!-- Zone d'upload -->
+        <div class="assemble-upload-zone" id="uploadZone">
+          <i data-lucide="upload-cloud"></i>
+          <p>Glissez des fichiers MP4 ici</p>
+          <span>ou cliquez pour parcourir</span>
+        </div>
+        <input type="file" id="fileInputHidden" multiple accept=".mp4,video/mp4">
+
+        <!-- Liste d'assemblage -->
+        <div class="assemble-section">
+          <label class="form-label">Ordre d'assemblage</label>
+          <div id="assembleList">
+            <div class="empty-state" id="assembleEmptyState">
+              <i data-lucide="film"></i>
+              <p>Aucun extrait ajouté.</p>
+              <p class="empty-hint">Glissez des fichiers ou cliquez sur la zone ci-dessus.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Nom fichier -->
+        <div class="form-group">
+          <label class="form-label" for="assembleFileName">Nom du fichier final</label>
+          <input type="text" id="assembleFileName" class="form-input"
+            placeholder="video_finale" value="video_finale">
+        </div>
+
+        <!-- Mode assemblage -->
+        <div class="form-group">
+          <label class="form-label">Mode d'assemblage</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="assembleMode" value="auto" checked>
+              <div class="radio-content">
+                <span class="radio-label">Automatique <span class="badge-recommended">Recommandé</span></span>
+                <span class="radio-desc">Détecte si réencodage nécessaire</span>
+              </div>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="assembleMode" value="concat">
+              <div class="radio-content">
+                <span class="radio-label">Fusion directe</span>
+                <span class="radio-desc">Sans réencodage — même format requis</span>
+              </div>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="assembleMode" value="reencode">
+              <div class="radio-content">
+                <span class="radio-label">Réencodage complet</span>
+                <span class="radio-desc">Harmonise tous les formats</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Slider CRF -->
+        <div class="form-group crf-group" id="crfGroup">
+          <div class="crf-header">
+            <label class="form-label">Qualité CRF <span class="crf-value" id="crfValue">18</span></label>
+            <label class="crf-auto-label">
+              <input type="checkbox" id="crfAuto" checked>
+              <span>Auto</span>
+            </label>
+          </div>
+          <div class="crf-slider-row">
+            <span class="crf-label-left">Haute qualité</span>
+            <input type="range" id="crfSlider" class="crf-slider" min="0" max="51" value="18" disabled>
+            <span class="crf-label-right">Compression</span>
+          </div>
+          <div class="crf-desc" id="crfDesc"></div>
+        </div>
+
+        <div class="compat-warning" id="compatWarning" style="display:none">
+          <i data-lucide="alert-triangle"></i>
+          <span>Formats incompatibles — réencodage automatique activé.</span>
+        </div>
+
+        <button class="btn-primary btn-full" id="btnAssemble" disabled>
+          <i data-lucide="scissors"></i>Assembler et télécharger
+        </button>
+
+        <div class="progress-section" id="assembleProgressSection" style="display:none">
+          <div class="progress-header">
+            <span class="progress-label-text">Assemblage en cours...</span>
+            <span class="progress-pct" id="assembleProgressPct">...</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill running" id="assembleProgressFill" style="width:60%"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- Nav mobile -->
+<nav class="bottom-nav" id="bottomNav">
+  <button class="bottom-nav-item active" data-tab="download">
+    <i data-lucide="download"></i><span>Télécharger</span>
+  </button>
+  <button class="bottom-nav-item" data-tab="queue">
+    <i data-lucide="list-ordered"></i><span>File</span>
+    <span class="queue-badge mobile" id="queueBadgeMobile" style="display:none">0</span>
+  </button>
+  <button class="bottom-nav-item" data-tab="assemble">
+    <i data-lucide="scissors"></i><span>Assembler</span>
+  </button>
+</nav>
+
+<script src="/static/js/app.js"></script>
+<script src="/static/js/downloader.js"></script>
+<script src="/static/js/queue.js"></script>
+<script src="/static/js/assembler.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

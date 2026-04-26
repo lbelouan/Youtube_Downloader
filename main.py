@@ -1,0 +1,212 @@
+import shutil
+import sys
+import os
+import json
+import time
+
+from flask import (
+    Flask, Response, request, jsonify,
+    render_template, send_file, after_this_request,
+)
+
+from config import FLASK_HOST, FLASK_PORT, TEMP_DIR
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB upload max
+
+
+def check_dependencies():
+    missing = []
+    if not shutil.which("ffmpeg"):
+        # Fallback: ~/bin
+        home_bin = os.path.join(os.path.expanduser("~"), "bin", "ffmpeg")
+        if not os.path.exists(home_bin):
+            missing.append("ffmpeg")
+    if not shutil.which("yt-dlp"):
+        missing.append("yt-dlp")
+    return missing
+
+
+@app.route("/")
+def index():
+    missing = check_dependencies()
+    return render_template("index.html", missing_deps=missing)
+
+
+# ── Info vidéo ──────────────────────────────────────────────
+@app.route("/api/info")
+def api_info():
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "URL manquante"}), 400
+    try:
+        from downloader import get_video_info
+        return jsonify(get_video_info(url))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ── File d'attente ──────────────────────────────────────────
+@app.route("/queue/add", methods=["POST"])
+def queue_add():
+    data = request.json
+    if not data or not data.get("url"):
+        return jsonify({"error": "Données manquantes"}), 400
+    from queue_manager import queue_manager
+    task_id = queue_manager.add_task(data)
+    return jsonify({"status": "ok", "task_id": task_id})
+
+
+@app.route("/queue/cancel/<task_id>", methods=["POST"])
+def queue_cancel(task_id):
+    from queue_manager import queue_manager
+    queue_manager.cancel_task(task_id)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/queue/reorder", methods=["POST"])
+def queue_reorder():
+    data = request.json
+    from queue_manager import queue_manager
+    queue_manager.reorder(data["id"], data["direction"])
+    return jsonify({"status": "ok"})
+
+
+@app.route("/queue/clear", methods=["POST"])
+def queue_clear():
+    from queue_manager import queue_manager
+    queue_manager.clear_finished()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/stream/queue")
+def stream_queue():
+    def generate():
+        from queue_manager import queue_manager
+        while True:
+            payload = json.dumps(queue_manager.get_queue(), ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+            time.sleep(1)
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Téléchargement → navigateur ─────────────────────────────
+@app.route("/download/file/<task_id>")
+def download_file(task_id):
+    from queue_manager import queue_manager
+    queue = queue_manager.get_queue()
+    task  = next((t for t in queue if t["id"] == task_id), None)
+    if not task or not task.get("output"):
+        return "Fichier introuvable", 404
+    path = task["output"]
+    if not os.path.exists(path):
+        return "Fichier introuvable", 404
+
+    filename = os.path.basename(path)
+
+    @after_this_request
+    def cleanup(response):
+        try:
+            os.remove(path)
+            queue_manager.remove_task(task_id)
+        except Exception:
+            pass
+        return response
+
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="video/mp4",
+    )
+
+
+# ── Assemblage ──────────────────────────────────────────────
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    """Reçoit un ou plusieurs fichiers MP4 uploadés depuis le navigateur."""
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "Aucun fichier reçu"}), 400
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    saved = []
+    for f in files:
+        safe = os.path.basename(f.filename or "upload.mp4")
+        dest = os.path.join(TEMP_DIR, f"upload_{int(time.time()*1000)}_{safe}")
+        f.save(dest)
+        saved.append({"filename": safe, "path": dest})
+    return jsonify({"files": saved})
+
+
+@app.route("/api/probe", methods=["POST"])
+def api_probe():
+    data  = request.json
+    files = data.get("files", [])
+    safe_files = [f for f in files if os.path.abspath(f).startswith(os.path.abspath(TEMP_DIR))]
+    try:
+        from assembler import get_files_info, check_compatibility
+        infos  = get_files_info(safe_files)
+        compat = check_compatibility(safe_files) if len(safe_files) > 1 else True
+        return jsonify({"files": infos, "compatible": compat})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/assemble", methods=["POST"])
+def assemble():
+    data = request.json
+    if not data or not data.get("files"):
+        return jsonify({"error": "Fichiers manquants"}), 400
+    safe_name = os.path.basename(data.get("filename") or "video_finale")
+    output    = os.path.join(TEMP_DIR, f"{safe_name}.mp4")
+    mode = data.get("mode", "auto")
+    crf  = int(data.get("crf", 18))
+    try:
+        from assembler import assemble_auto, assemble_concat, assemble_reencode
+        if mode == "concat":
+            assemble_concat(data["files"], output)
+        elif mode == "reencode":
+            assemble_reencode(data["files"], output, crf)
+        else:
+            assemble_auto(data["files"], output, crf)
+
+        @after_this_request
+        def cleanup_inputs(response):
+            for f in data["files"]:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+            return response
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=f"{safe_name}.mp4",
+            mimetype="video/mp4",
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    missing = check_dependencies()
+    if missing:
+        print(f"\n⚠️  Dépendances manquantes : {', '.join(missing)}")
+
+    import socket
+    try:
+        local_ip = socket.gethostbyname(socket.gethostname())
+    except Exception:
+        local_ip = "localhost"
+
+    print(f"\n🎬 YouTube Downloader démarré")
+    print(f"   Local  : http://localhost:{FLASK_PORT}")
+    print(f"   Réseau : http://{local_ip}:{FLASK_PORT}\n")
+
+    app.run(host=FLASK_HOST, port=FLASK_PORT, threaded=True, debug=False)
