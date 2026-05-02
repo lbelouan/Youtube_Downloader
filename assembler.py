@@ -3,7 +3,7 @@ import os
 import json
 import time
 from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_AUDIO_BITRATE
-from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args
+from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdecode_args
 
 
 def _subprocess_env() -> dict:
@@ -231,14 +231,15 @@ def assemble_reencode(input_files: list, output_path: str,
     filter_complex = ";".join(filter_parts)
 
     # ── Sélection encodeur optimal ────────────────────────────
-    enc_args = video_encode_args(crf, target_w, target_h)
+    enc_args  = video_encode_args(crf, target_w, target_h)
+    hw_decode = hwdecode_args()   # aide le décodage si disponible
 
     inputs = []
     for f in input_files:
         inputs += ["-i", f]
 
     cmd = [
-        "ffmpeg", *inputs,
+        "ffmpeg", *hw_decode, *inputs,
         "-filter_complex", filter_complex,
         *maps,
         *enc_args,

@@ -1,11 +1,20 @@
 """
 Utilitaires FFmpeg partagés : détection VideoToolbox, sélection du codec optimal.
-Compatible macOS (Apple Silicon / Intel) et Linux (Vercel).
+
+Stratégie :
+  - macOS : h264_videotoolbox (GPU/Media Engine Apple Silicon)
+             + -hwaccel auto pour aider le décodage
+  - Linux / Vercel : libx264 preset fast (CPU, raisonnable)
+
+Notes :
+  - VideoToolbox n'accepte pas -crf : on utilise -b:v proportionnel à la résolution.
+  - Sur Apple Silicon M-series, VideoToolbox utilise le Media Engine dédié
+    (séparé du CPU et du GPU), charge CPU ≈ 0%.
 """
 import subprocess
 import os
 
-_VT_AVAILABLE: bool | None = None   # cache
+_VT_AVAILABLE: bool | None = None   # cache — invalidé si le binaire change
 
 
 def _base_env() -> dict:
@@ -37,15 +46,14 @@ def has_videotoolbox() -> bool:
 
 def vt_bitrate(crf: int, width: int, height: int) -> str:
     """
-    Convertit un CRF (0-51) en débit cible pour VideoToolbox.
-    VideoToolbox n'accepte pas CRF — on utilise un débit proportionnel
-    à la résolution et à la qualité souhaitée.
+    Convertit un CRF (0–51) en débit cible pour VideoToolbox.
+    VideoToolbox n'accepte pas CRF : on cible un débit calibré par résolution.
 
     Référence 1080p :
-      CRF ≤18 → 8 Mbps  (quasi-lossless)
-      CRF ≤23 → 5 Mbps  (haute qualité)
-      CRF ≤28 → 3 Mbps  (qualité correcte)
-      CRF >28 → 1.5 Mbps (compression visible)
+      CRF ≤ 18  → 8 Mbps   (quasi-lossless)
+      CRF ≤ 23  → 5 Mbps   (haute qualité)
+      CRF ≤ 28  → 3 Mbps   (qualité correcte)
+      CRF > 28  → 1.5 Mbps (compression visible)
     """
     if crf <= 18:
         base = 8_000
@@ -55,20 +63,38 @@ def vt_bitrate(crf: int, width: int, height: int) -> str:
         base = 3_000
     else:
         base = 1_500
+
     pixels = width * height
-    kbps = int(base * pixels / (1920 * 1080))
+    kbps   = int(base * pixels / (1920 * 1080))
     return f"{max(500, min(kbps, 50_000))}k"
+
+
+def hwdecode_args() -> list[str]:
+    """
+    Arguments de décodage hardware à placer avant -i.
+    Aide FFmpeg à choisir le décodeur le plus rapide disponible.
+    Ignoré si non supporté (fallback silencieux).
+    """
+    if has_videotoolbox():
+        return ["-hwaccel", "auto"]
+    return []
 
 
 def video_encode_args(crf: int, width: int = 1920, height: int = 1080) -> list[str]:
     """
-    Retourne les arguments FFmpeg d'encodage vidéo optimaux selon l'environnement :
-    - macOS : h264_videotoolbox (GPU/Neural Engine, sans toucher au CPU)
-    - Linux / Vercel : libx264 preset fast (CPU, raisonnable)
+    Retourne les arguments FFmpeg d'encodage vidéo optimaux :
+
+    macOS avec VideoToolbox :
+      → h264_videotoolbox + -b:v calibré (GPU/Media Engine, CPU ≈ 0%)
+        Compatible universellement (H.264 joue partout).
+
+    Linux / Vercel (sans VideoToolbox) :
+      → libx264 + preset fast (CPU raisonnable)
 
     Usage :
-        cmd = ["ffmpeg", "-i", src, *video_encode_args(18, 3840, 2160),
-               "-c:a", "aac", output, "-y"]
+        cmd = ["ffmpeg", *hwdecode_args(), "-i", src,
+               *video_encode_args(18, 3840, 2160),
+               "-c:a", "aac", out, "-y"]
     """
     if has_videotoolbox():
         return [
@@ -79,6 +105,6 @@ def video_encode_args(crf: int, width: int = 1920, height: int = 1080) -> list[s
         from config import DEFAULT_PRESET
         return [
             "-c:v", "libx264",
-            "-crf", str(crf),
+            "-crf",    str(crf),
             "-preset", DEFAULT_PRESET,
         ]

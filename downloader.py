@@ -2,7 +2,7 @@ import subprocess
 import os
 import json
 from config import YTDLP_FORMAT, YTDLP_MERGE_FORMAT, TEMP_DIR
-from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args
+from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdecode_args
 
 
 def _subprocess_env() -> dict:
@@ -159,9 +159,9 @@ def cut_segment(input_path: str, start: str, end: str,
         w, h        = _probe_video(input_path)
         enc_args    = video_encode_args(18, w, h)   # CRF 18 = haute qualité
         codec_args  = [*enc_args, "-c:a", "aac", "-b:a", "256k"]
-        # Seek AVANT -i pour la précision (input seeking = lent mais frame-exact)
+        hw_decode   = hwdecode_args()
         cmd = [
-            "ffmpeg",
+            "ffmpeg", *hw_decode,
             "-ss", start, "-to", end,
             "-i", input_path,
             *codec_args,
