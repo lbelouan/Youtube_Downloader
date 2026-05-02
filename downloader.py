@@ -1,15 +1,32 @@
 import subprocess
 import os
 import json
-from config import YTDLP_FORMAT, YTDLP_MERGE_FORMAT, TEMP_DIR, OUTPUT_DIR
+from config import YTDLP_FORMAT, YTDLP_MERGE_FORMAT, TEMP_DIR
 
 
 def _subprocess_env() -> dict:
     """Environnement enrichi pour les subprocesses : PATH + certificats SSL."""
     env = os.environ.copy()
-    # Ajouter ~/bin au PATH pour ffmpeg installé sans Homebrew
-    home_bin = os.path.expanduser("~/bin")
-    env["PATH"] = home_bin + os.pathsep + env.get("PATH", "")
+
+    extra_paths = []
+
+    # ~/bin pour ffmpeg installé sans Homebrew
+    extra_paths.append(os.path.expanduser("~/bin"))
+
+    # Node.js via nvm (requis par yt-dlp pour extraire YouTube)
+    nvm_dir = os.path.expanduser("~/.nvm/versions/node")
+    if os.path.isdir(nvm_dir):
+        versions = sorted(os.listdir(nvm_dir))
+        if versions:
+            extra_paths.append(os.path.join(nvm_dir, versions[-1], "bin"))
+
+    # Node.js via homebrew ou installation standard
+    for p in ["/usr/local/bin", "/opt/homebrew/bin"]:
+        if os.path.isdir(p):
+            extra_paths.append(p)
+
+    env["PATH"] = os.pathsep.join(extra_paths) + os.pathsep + env.get("PATH", "")
+
     # Certificats SSL via certifi (fix macOS Python 3.14)
     try:
         import certifi

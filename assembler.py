@@ -1,7 +1,7 @@
 import subprocess
 import os
 import json
-from config import TEMP_DIR, OUTPUT_DIR, DEFAULT_CRF, DEFAULT_PRESET, DEFAULT_AUDIO_BITRATE
+from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_PRESET, DEFAULT_AUDIO_BITRATE
 
 
 def _subprocess_env() -> dict:
