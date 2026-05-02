@@ -12,18 +12,6 @@ from flask import (
 
 from config import FLASK_HOST, FLASK_PORT, TEMP_DIR, ASSEMBLER_INPUT_DIR
 
-# ── Setup ffmpeg (Vercel / environnements sans ffmpeg système) ───
-def _setup_ffmpeg():
-    if not shutil.which("ffmpeg"):
-        try:
-            os.environ.setdefault("STATIC_FFMPEG_PATH", os.path.join(TEMP_DIR, "ffmpeg_bin"))
-            import static_ffmpeg
-            static_ffmpeg.add_paths()
-        except Exception:
-            pass
-
-_setup_ffmpeg()
-
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
@@ -40,8 +28,6 @@ def check_dependencies():
     return missing
 
 
-IS_VERCEL = bool(os.environ.get("VERCEL"))
-
 # ── Jobs d'assemblage asynchrones ──────────────────────────
 _assemble_jobs   = {}   # job_id -> {status, progress, output, error}
 _assemble_inputs = {}   # job_id -> [input file paths]
@@ -53,7 +39,6 @@ def index():
     return render_template(
         "index.html",
         missing_deps=missing,
-        is_vercel=IS_VERCEL,
         assembler_input_dir=ASSEMBLER_INPUT_DIR,
     )
 
@@ -151,22 +136,6 @@ def download_file(task_id):
 
 
 # ── Assemblage ──────────────────────────────────────────────
-@app.route("/api/upload", methods=["POST"])
-def api_upload():
-    """Reçoit un ou plusieurs fichiers MP4 uploadés depuis le navigateur."""
-    files = request.files.getlist("files")
-    if not files:
-        return jsonify({"error": "Aucun fichier reçu"}), 400
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    saved = []
-    for f in files:
-        safe = os.path.basename(f.filename or "upload.mp4")
-        dest = os.path.join(TEMP_DIR, f"upload_{int(time.time()*1000)}_{safe}")
-        f.save(dest)
-        saved.append({"filename": safe, "path": dest})
-    return jsonify({"files": saved})
-
-
 @app.route("/api/assembler-local-files")
 def assembler_local_files():
     """Liste les MP4 présents dans le dossier d'entrée local (mode non-Vercel)."""
@@ -326,6 +295,12 @@ def assemble_download(job_id):
 
 
 if __name__ == "__main__":
+    # Injecter Homebrew dans le PATH du process principal
+    # (cohérence avec _subprocess_env / _base_env qui le font déjà)
+    for _p in ["/opt/homebrew/bin", os.path.expanduser("~/bin")]:
+        if os.path.isdir(_p) and _p not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
+
     os.makedirs(TEMP_DIR, exist_ok=True)
     os.makedirs(ASSEMBLER_INPUT_DIR, exist_ok=True)
     missing = check_dependencies()

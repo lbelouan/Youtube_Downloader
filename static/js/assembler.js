@@ -67,57 +67,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Mode Vercel : upload navigateur ─────────────────────
-  if (window.IS_VERCEL) {
-    const uploadZone = document.getElementById('uploadZone');
-    const fileInput  = document.getElementById('fileInputHidden');
-
-    uploadZone.addEventListener('click', () => fileInput.click());
-    uploadZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      uploadZone.classList.add('dragover');
-    });
-    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-    uploadZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      uploadZone.classList.remove('dragover');
-      handleFiles([...e.dataTransfer.files]);
-    });
-    fileInput.addEventListener('change', () => {
-      handleFiles([...fileInput.files]);
-      fileInput.value = '';
-    });
-
-    async function handleFiles(files) {
-      const mp4s = files.filter(f => f.name.toLowerCase().endsWith('.mp4') || f.type === 'video/mp4');
-      if (!mp4s.length) return;
-      btnAssemble.disabled = true;
-      uploadZone.querySelector('p').textContent = `Upload de ${mp4s.length} fichier(s)...`;
-      const formData = new FormData();
-      mp4s.forEach(f => formData.append('files', f));
-      try {
-        const res  = await fetch('/api/upload', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        uploadedFiles.push(...data.files);
-        renderAssembleList();
-      } catch (e) {
-        alert('Erreur upload : ' + e.message);
-      } finally {
-        uploadZone.querySelector('p').textContent = 'Glissez des fichiers MP4 ici';
-        btnAssemble.disabled = uploadedFiles.length === 0;
-      }
-    }
-
-  } else {
-    // ── Mode local : dossier sur disque ───────────────────
-    const btnRefresh = document.getElementById('btnRefreshFiles');
-    if (btnRefresh) {
-      btnRefresh.addEventListener('click', () => loadLocalFiles(true));
-    }
-    // Chargement initial
-    loadLocalFiles(false);
+  // ── Mode local : dossier sur disque ─────────────────────
+  const btnRefresh = document.getElementById('btnRefreshFiles');
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', () => loadLocalFiles(true));
   }
+  loadLocalFiles(false);
 
   async function loadLocalFiles(showFeedback = false) {
     const btnRefresh = document.getElementById('btnRefreshFiles');
