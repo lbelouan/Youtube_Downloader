@@ -53,43 +53,104 @@ def assemble_concat(input_files: list, output_path: str):
         for fp in input_files:
             f.write(f"file '{os.path.abspath(fp)}'\n")
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 "ffmpeg", "-f", "concat", "-safe", "0",
                 "-i", list_path,
                 "-c", "copy",
                 output_path, "-y",
             ],
-            check=True,
+            check=False,
             capture_output=True,
             env=_subprocess_env(),
         )
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")
+            raise RuntimeError(f"FFmpeg concat failed (code {result.returncode}):\n{stderr[-2000:]}")
     finally:
         if os.path.exists(list_path):
             os.remove(list_path)
 
 
 def assemble_reencode(input_files: list, output_path: str, crf: int = DEFAULT_CRF):
+    """Réencode et concatène les fichiers en normalisant les résolutions et codecs."""
+    infos = [probe_file(f) for f in input_files]
+    n = len(input_files)
+
+    # Résolution cible = celle du premier fichier
+    vid0 = get_video_stream(infos[0])
+    target_w = vid0.get("width",  1920)
+    target_h = vid0.get("height", 1080)
+
+    # Présence audio par fichier
+    has_audio_list = [
+        any(s.get("codec_type") == "audio" for s in info.get("streams", []))
+        for info in infos
+    ]
+    all_have_audio = all(has_audio_list)
+
+    # Construction du filtre complexe
+    # — scale + pad chaque flux vidéo à la résolution cible
+    filter_parts = []
+    vid_labels   = []
+    aud_labels   = []
+
+    for i, info in enumerate(infos):
+        vid = get_video_stream(info)
+        w   = vid.get("width",  target_w)
+        h   = vid.get("height", target_h)
+
+        if w != target_w or h != target_h:
+            scale_filt = (
+                f"[{i}:v:0]scale={target_w}:{target_h}"
+                f":force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
+                f"setsar=1[v{i}]"
+            )
+        else:
+            scale_filt = f"[{i}:v:0]setsar=1[v{i}]"
+
+        filter_parts.append(scale_filt)
+        vid_labels.append(f"[v{i}]")
+        if all_have_audio:
+            aud_labels.append(f"[{i}:a:0]")
+
+    if all_have_audio:
+        concat_in  = "".join(f"{v}{a}" for v, a in zip(vid_labels, aud_labels))
+        concat_out = f"concat=n={n}:v=1:a=1[outv][outa]"
+        filter_parts.append(concat_in + concat_out)
+        maps       = ["-map", "[outv]", "-map", "[outa]"]
+        audio_opts = ["-c:a", "aac", "-b:a", DEFAULT_AUDIO_BITRATE]
+    else:
+        concat_in  = "".join(vid_labels)
+        concat_out = f"concat=n={n}:v=1:a=0[outv]"
+        filter_parts.append(concat_in + concat_out)
+        maps       = ["-map", "[outv]"]
+        audio_opts = []
+
+    filter_complex = ";".join(filter_parts)
+
     inputs = []
     for f in input_files:
         inputs += ["-i", f]
-    n = len(input_files)
-    filt = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(n))
-    filt += f"concat=n={n}:v=1:a=1[outv][outa]"
-    subprocess.run(
+
+    result = subprocess.run(
         [
             "ffmpeg", *inputs,
-            "-filter_complex", filt,
-            "-map", "[outv]", "-map", "[outa]",
+            "-filter_complex", filter_complex,
+            *maps,
             "-c:v", "libx264", "-crf", str(crf), "-preset", DEFAULT_PRESET,
-            "-c:a", "aac", "-b:a", DEFAULT_AUDIO_BITRATE,
+            *audio_opts,
             "-movflags", "+faststart",
             output_path, "-y",
         ],
-        check=True,
+        check=False,
         env=_subprocess_env(),
         capture_output=True,
     )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")
+        raise RuntimeError(f"FFmpeg reencode failed (code {result.returncode}):\n{stderr[-2000:]}")
 
 
 def assemble_auto(input_files: list, output_path: str, crf: int = DEFAULT_CRF):
