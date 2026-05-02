@@ -18,9 +18,18 @@ _VT_AVAILABLE: bool | None = None   # cache — invalidé si le binaire change
 
 
 def _base_env() -> dict:
+    """
+    Ordre de priorité des binaires ffmpeg :
+      1. /opt/homebrew/bin  — Homebrew ARM64 natif (libdav1d, VT AV1 decode…)
+      2. ~/bin              — binaires statiques ARM64 manuels (fallback)
+    """
     env = os.environ.copy()
-    home_bin = os.path.expanduser("~/bin")
-    env["PATH"] = home_bin + os.pathsep + env.get("PATH", "")
+    paths = [
+        "/opt/homebrew/bin",          # Homebrew (priorité max, toutes optimisations)
+        os.path.expanduser("~/bin"),  # statiques manuels
+    ]
+    env["PATH"] = os.pathsep.join(p for p in paths if os.path.isdir(p)) \
+                  + os.pathsep + env.get("PATH", "")
     return env
 
 

@@ -11,8 +11,10 @@ def _subprocess_env() -> dict:
 
     extra_paths = []
 
-    # ~/bin pour ffmpeg/ffprobe installés sans Homebrew
-    extra_paths.append(os.path.expanduser("~/bin"))
+    # ffmpeg/ffprobe : Homebrew ARM64 en priorité, puis statiques manuels
+    for p in ["/opt/homebrew/bin", os.path.expanduser("~/bin")]:
+        if os.path.isdir(p):
+            extra_paths.append(p)
 
     # Node.js via nvm (requis par yt-dlp pour extraire YouTube)
     nvm_dir = os.path.expanduser("~/.nvm/versions/node")
@@ -21,8 +23,8 @@ def _subprocess_env() -> dict:
         if versions:
             extra_paths.append(os.path.join(nvm_dir, versions[-1], "bin"))
 
-    # Node.js via homebrew ou installation standard
-    for p in ["/usr/local/bin", "/opt/homebrew/bin"]:
+    # Node.js via installation standard
+    for p in ["/usr/local/bin"]:
         if os.path.isdir(p):
             extra_paths.append(p)
 

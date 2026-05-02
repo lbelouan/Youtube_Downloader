@@ -7,9 +7,18 @@ from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdeco
 
 
 def _subprocess_env() -> dict:
+    """
+    Ordre de priorité :
+      1. /opt/homebrew/bin  — Homebrew ARM64 (libdav1d, VT AV1 decode…)
+      2. ~/bin              — statiques ARM64 manuels
+    """
     env = os.environ.copy()
-    home_bin = os.path.expanduser("~/bin")
-    env["PATH"] = home_bin + os.pathsep + env.get("PATH", "")
+    paths = [
+        "/opt/homebrew/bin",
+        os.path.expanduser("~/bin"),
+    ]
+    env["PATH"] = os.pathsep.join(p for p in paths if os.path.isdir(p)) \
+                  + os.pathsep + env.get("PATH", "")
     return env
 
 

@@ -338,9 +338,35 @@ if __name__ == "__main__":
     except Exception:
         local_ip = "localhost"
 
+    # ── Infos encodeur au démarrage ──────────────────────────
+    from ffmpeg_utils import has_videotoolbox
+    import shutil as _shutil
+
+    ffmpeg_path  = _shutil.which("ffmpeg")  or "introuvable"
+    ffprobe_path = _shutil.which("ffprobe") or "introuvable"
+
+    brew_ffmpeg = "/opt/homebrew/bin/ffmpeg"
+    using_brew  = os.path.exists(brew_ffmpeg)
+
+    if has_videotoolbox():
+        enc_info = "✅ VideoToolbox (GPU/Media Engine Apple Silicon)"
+    else:
+        enc_info = "⚙️  libx264 CPU (VideoToolbox non disponible)"
+
     print(f"\n🎬 YouTube Downloader démarré")
     print(f"   Local  : http://localhost:{FLASK_PORT}")
     print(f"   Réseau : http://{local_ip}:{FLASK_PORT}")
+    print(f"\n⚡ Encodeur : {enc_info}")
+    print(f"   ffmpeg  : {ffmpeg_path}")
+    print(f"   ffprobe : {ffprobe_path}")
+
+    if not using_brew:
+        print(f"\n💡 Pour des performances maximales (décodage AV1 hardware) :")
+        print(f"   1. Ouvre Terminal et exécute :")
+        print(f"      /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
+        print(f"   2. Puis : brew install ffmpeg")
+        print(f"   L'app utilisera automatiquement Homebrew au prochain démarrage.")
+
     print(f"\n📂 Dossier assembleur : {ASSEMBLER_INPUT_DIR}")
     print(f"   Déposez vos MP4 dans ce dossier puis cliquez sur 'Actualiser'\n")
 
