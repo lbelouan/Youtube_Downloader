@@ -200,8 +200,49 @@
           <input type="text" id="fileName" class="form-input" placeholder="extrait_01">
         </div>
 
-        <!-- Mode de découpe -->
+        <!-- Format : MP4 / MP3 -->
         <div class="form-group">
+          <label class="form-label">Format</label>
+          <div class="format-toggle">
+            <button class="format-btn active" data-format="mp4" id="fmtMp4">
+              <i data-lucide="film"></i> MP4 Vidéo
+            </button>
+            <button class="format-btn" data-format="mp3" id="fmtMp3">
+              <i data-lucide="music"></i> MP3 Audio
+            </button>
+          </div>
+        </div>
+
+        <!-- Qualité MP3 (masquée par défaut) -->
+        <div class="form-group" id="mp3QualityGroup" style="display:none">
+          <label class="form-label">Qualité audio</label>
+          <div class="radio-group radio-group-inline">
+            <label class="radio-option">
+              <input type="radio" name="mp3Bitrate" value="128k">
+              <div class="radio-content">
+                <span class="radio-label">128 kbps</span>
+                <span class="radio-desc">Léger</span>
+              </div>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="mp3Bitrate" value="192k">
+              <div class="radio-content">
+                <span class="radio-label">192 kbps</span>
+                <span class="radio-desc">Équilibré</span>
+              </div>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="mp3Bitrate" value="320k" checked>
+              <div class="radio-content">
+                <span class="radio-label">320 kbps</span>
+                <span class="radio-desc">Haute qualité</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Mode de découpe (MP4 uniquement) -->
+        <div class="form-group" id="cutModeGroup">
           <label class="form-label">Mode de découpe</label>
           <div class="radio-group">
             <label class="radio-option">

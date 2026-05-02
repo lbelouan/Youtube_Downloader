@@ -113,13 +113,17 @@ class QueueManager:
             self._save()
 
         os.makedirs(TEMP_DIR, exist_ok=True)
-        safe_id    = task["id"].replace(":", "_").replace(".", "_")
-        temp_raw   = os.path.join(TEMP_DIR, f"raw_{safe_id}.mp4")
-        safe_name  = os.path.basename(task.get("filename") or "extrait")
-        final_path = os.path.join(TEMP_DIR, f"{safe_name}_{safe_id}.mp4")
+        fmt       = task.get("format", "mp4")   # "mp4" ou "mp3"
+        bitrate   = task.get("bitrate", "320k")
+        safe_id   = task["id"].replace(":", "_").replace(".", "_")
+        safe_name = os.path.basename(task.get("filename") or "extrait")
+        ext       = "mp3" if fmt == "mp3" else "mp4"
+        temp_raw  = os.path.join(TEMP_DIR, f"raw_{safe_id}.{ext}")
+        final_path = os.path.join(TEMP_DIR, f"{safe_name}_{safe_id}.{ext}")
 
         try:
-            from downloader import download_best_quality, cut_segment
+            from downloader import (download_best_quality, download_best_mp3,
+                                    cut_segment, cut_audio_mp3)
 
             def on_progress(pct):
                 with self.lock:
@@ -136,13 +140,15 @@ class QueueManager:
                 return proc
 
             _sp.Popen = patched_popen
+            no_cut = not task.get("start") and not task.get("end")
             try:
-                # Si pas de timecodes → télécharger directement sans découpe
-                no_cut = not task.get("start") and not task.get("end")
-                if no_cut:
-                    download_best_quality(task["url"], final_path, progress_callback=on_progress)
+                if fmt == "mp3":
+                    dest = final_path if no_cut else temp_raw
+                    download_best_mp3(task["url"], dest,
+                                      bitrate=bitrate, progress_callback=on_progress)
                 else:
-                    download_best_quality(task["url"], temp_raw, progress_callback=on_progress)
+                    dest = final_path if no_cut else temp_raw
+                    download_best_quality(task["url"], dest, progress_callback=on_progress)
             finally:
                 _sp.Popen = orig_popen
                 self.current_process = None
@@ -154,8 +160,11 @@ class QueueManager:
             if not no_cut:
                 start = task.get("start") or "00:00:00"
                 end   = task.get("end")   or "99:59:59"
-                cut_segment(temp_raw, start, end, final_path,
-                            precise=task.get("precise", False))
+                if fmt == "mp3":
+                    cut_audio_mp3(temp_raw, start, end, final_path, bitrate=bitrate)
+                else:
+                    cut_segment(temp_raw, start, end, final_path,
+                                precise=task.get("precise", False))
 
             with self.lock:
                 task["status"]   = "done"

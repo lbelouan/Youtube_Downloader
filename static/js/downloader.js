@@ -23,6 +23,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let videoDuration = null;
   let videoInfo     = null;
+  let selectedFormat = 'mp4';
+
+  // ── Toggle MP4 / MP3 ────────────────────────────────────
+  const fmtMp4       = document.getElementById('fmtMp4');
+  const fmtMp3       = document.getElementById('fmtMp3');
+  const mp3QualityGrp= document.getElementById('mp3QualityGroup');
+  const cutModeGrp   = document.getElementById('cutModeGroup');
+
+  [fmtMp4, fmtMp3].forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedFormat = btn.dataset.format;
+      fmtMp4.classList.toggle('active', selectedFormat === 'mp4');
+      fmtMp3.classList.toggle('active', selectedFormat === 'mp3');
+      mp3QualityGrp.style.display = selectedFormat === 'mp3' ? 'block' : 'none';
+      cutModeGrp.style.display    = selectedFormat === 'mp4' ? 'block' : 'none';
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    });
+  });
 
   // ── Timecode Picker ──────────────────────────────────────
   function initTcPicker(prefix) {
@@ -211,11 +229,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const end      = endPicker.getValue();
     const filename = fileNameInput.value.trim() || 'extrait';
     const precise  = document.querySelector('input[name="cutMode"]:checked')?.value === 'precise';
+    const bitrate  = document.querySelector('input[name="mp3Bitrate"]:checked')?.value || '320k';
 
     if (!url) { showUrlError('URL requise'); return null; }
     if ((start || end) && !validateTimecodes()) return null;
 
-    return { url, start, end, filename, precise, title: videoInfo?.title || url };
+    return { url, start, end, filename, precise, format: selectedFormat,
+             bitrate, title: videoInfo?.title || url };
   }
 
   // ── Ajouter à la file ────────────────────────────────────
