@@ -107,6 +107,11 @@
               </div>
             </div>
           </div>
+          <div class="preview-actions" id="previewActions" style="display:none">
+            <button class="btn-secondary btn-sm" id="btnCutFromYt">
+              <i data-lucide="clapperboard"></i> Prévisualiser &amp; Découper
+            </button>
+          </div>
         </div>
 
         <!-- Timecodes -->
@@ -342,7 +347,7 @@
           <label class="form-label">Fichier vidéo source</label>
           <div class="cutter-source-row">
             <input type="text" id="cutterPathInput" class="form-input"
-              placeholder="/Users/vous/Movies/video.mp4"
+              placeholder="URL YouTube  ou  /chemin/local/video.mp4"
               autocomplete="off" spellcheck="false">
             <button class="btn-secondary" id="btnLoadVideo">
               <i data-lucide="folder-open"></i><span>Charger</span>

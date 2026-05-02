@@ -12,7 +12,7 @@ import os
 import json
 import time
 import zipfile
-from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_AUDIO_BITRATE
+from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_AUDIO_BITRATE, YTDLP_FORMAT, YTDLP_MERGE_FORMAT
 from ffmpeg_utils import video_encode_args, hwdecode_args
 
 
@@ -145,3 +145,60 @@ def make_zip(files: list[str], zip_path: str):
         for f in files:
             if os.path.isfile(f):
                 zf.write(f, os.path.basename(f))
+
+
+def download_youtube_for_cut(
+    url: str,
+    on_progress=None,
+    proc_holder: dict = None,
+) -> str:
+    """
+    Télécharge une vidéo YouTube en qualité maximale vers un fichier temporaire.
+    Appelle on_progress(pct) avec des valeurs 0-50 (la découpe vient après).
+    Retourne le chemin local du fichier téléchargé.
+    """
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    out_path = os.path.join(TEMP_DIR, f"yt_cut_{int(time.time() * 1000)}.mp4")
+
+    cmd = [
+        "yt-dlp",
+        "--format",              YTDLP_FORMAT,
+        "--merge-output-format", YTDLP_MERGE_FORMAT,
+        "--output",              out_path,
+        "--no-playlist",
+        "--newline",
+        url,
+    ]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=_subprocess_env(),
+    )
+    if proc_holder is not None:
+        proc_holder["proc"] = proc
+
+    for line in proc.stdout:
+        if "[download]" in line and "%" in line:
+            try:
+                pct = float(line.split("%")[0].split()[-1])
+                if on_progress:
+                    on_progress(int(pct * 0.5))   # scale 0-100 → 0-50
+            except (ValueError, IndexError):
+                pass
+
+    returncode = proc.wait()
+    if proc_holder is not None:
+        proc_holder.pop("proc", None)
+
+    if returncode != 0:
+        if returncode in (-15, -9, 255):
+            raise RuntimeError("cancelled")
+        raise RuntimeError(f"Téléchargement YouTube échoué (code {returncode})")
+
+    if not os.path.isfile(out_path):
+        raise RuntimeError("Fichier téléchargé introuvable après yt-dlp")
+
+    return out_path

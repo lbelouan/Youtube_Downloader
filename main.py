@@ -337,15 +337,50 @@ def api_video_info():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/youtube/stream-url")
+def youtube_stream_url():
+    """
+    Extrait une URL de streaming directe YouTube via yt-dlp pour le navigateur.
+    Cherche en priorité un format combiné H.264+AAC (22=720p, 18=360p).
+    """
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "URL manquante"}), 400
+    try:
+        import subprocess as _sp
+        from downloader import _subprocess_env
+        # Formats combinés compatibles navigateur (pas d'AV1 — Safari ne supporte pas)
+        fmt = "22/18/best[vcodec^=avc1][acodec!=none][height<=720]/best[vcodec!*=av01][acodec!=none]"
+        r = _sp.run(
+            ["yt-dlp", "-f", fmt, "--get-url", "--no-playlist", url],
+            capture_output=True, text=True, timeout=30,
+            env=_subprocess_env()
+        )
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip()[-400:] or "yt-dlp failed")
+        stream_url = r.stdout.strip().split('\n')[0]
+        if not stream_url:
+            raise RuntimeError("Aucune URL de streaming disponible")
+        return jsonify({"url": stream_url})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/cut/start", methods=["POST"])
 def cut_start():
-    """Lance un export de segments en tâche de fond, retourne un job_id."""
+    """
+    Lance un export de segments en tâche de fond, retourne un job_id.
+    input peut être un chemin local ou une URL YouTube.
+    Phases : downloading (URL uniquement, 0→50%) puis cutting (50→100%).
+    """
     data = request.json
     if not data or not data.get("input") or not data.get("segments"):
         return jsonify({"error": "Paramètres manquants"}), 400
 
     input_path = data["input"]
-    if not os.path.isfile(input_path):
+    is_url     = input_path.startswith("http://") or input_path.startswith("https://")
+
+    if not is_url and not os.path.isfile(input_path):
         return jsonify({"error": "Fichier source introuvable"}), 404
 
     segments = data["segments"]
@@ -357,24 +392,44 @@ def cut_start():
     _cut_jobs[job_id] = {
         "status":      "running",
         "progress":    0,
+        "phase":       "downloading" if is_url else "cutting",
         "error":       None,
         "proc_holder": proc_holder,
-        "n_segments":  len(segments),
     }
     _cut_inputs[job_id] = input_path
 
     def run():
+        temp_dl = None
         try:
+            local_path = input_path
+
+            # ── Phase 1 : téléchargement YouTube ───────────────
+            if is_url:
+                _cut_jobs[job_id]["phase"] = "downloading"
+
+                def on_dl(pct):
+                    _cut_jobs[job_id]["progress"] = int(pct * 0.5)  # 0-50%
+
+                from cutter import download_youtube_for_cut
+                local_path = download_youtube_for_cut(input_path, on_dl, proc_holder)
+                temp_dl    = local_path
+
+            # Vérifier annulation entre les deux phases
+            if _cut_jobs.get(job_id, {}).get("status") == "cancelled":
+                raise RuntimeError("cancelled")
+
+            # ── Phase 2 : découpe ───────────────────────────────
+            _cut_jobs[job_id]["phase"] = "cutting"
+
+            def on_cut(pct):
+                if is_url:
+                    _cut_jobs[job_id]["progress"] = 50 + int(pct * 0.5)
+                else:
+                    _cut_jobs[job_id]["progress"] = pct
+
             from cutter import cut_segments_batch, make_zip
+            files = cut_segments_batch(local_path, segments, mode, crf, on_cut, proc_holder)
 
-            def on_prog(pct):
-                _cut_jobs[job_id]["progress"] = pct
-
-            files = cut_segments_batch(
-                input_path, segments, mode, crf, on_prog, proc_holder
-            )
-
-            # ZIP si plusieurs segments, MP4 direct si un seul
             if len(files) == 1:
                 _cut_jobs[job_id]["output_files"] = files
                 _cut_jobs[job_id]["zip_path"]     = None
@@ -394,6 +449,12 @@ def cut_start():
             else:
                 _cut_jobs[job_id]["status"] = "error"
                 _cut_jobs[job_id]["error"]  = err
+        finally:
+            if temp_dl and os.path.isfile(temp_dl):
+                try:
+                    os.remove(temp_dl)
+                except Exception:
+                    pass
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"job_id": job_id})
@@ -407,6 +468,7 @@ def cut_progress(job_id):
     return jsonify({
         "status":   job["status"],
         "progress": job["progress"],
+        "phase":    job.get("phase", "cutting"),
         "error":    job.get("error"),
     })
 

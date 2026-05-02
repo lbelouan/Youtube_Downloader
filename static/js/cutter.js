@@ -88,11 +88,13 @@ document.addEventListener('DOMContentLoaded', () => {
   pathInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadVideo(); });
 
   async function loadVideo() {
-    const path = pathInput.value.trim();
+    const path  = pathInput.value.trim();
+    const isUrl = path.startsWith('http://') || path.startsWith('https://');
+
     pathError.textContent = '';
     pathError.classList.remove('visible');
     if (!path) {
-      pathError.textContent = 'Entrez un chemin de fichier.';
+      pathError.textContent = 'Entrez un chemin de fichier ou une URL YouTube.';
       pathError.classList.add('visible');
       return;
     }
@@ -102,43 +104,87 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 
     try {
-      const res  = await fetch('/api/video/info?path=' + encodeURIComponent(path));
-      const info = await res.json();
-      if (info.error) throw new Error(info.error);
+      if (isUrl) {
+        // ── URL YouTube ─────────────────────────────────────
+        const [infoRes, streamRes] = await Promise.all([
+          fetch('/api/info?url=' + encodeURIComponent(path)),
+          fetch('/api/youtube/stream-url?url=' + encodeURIComponent(path)),
+        ]);
+        const info   = await infoRes.json();
+        const stream = await streamRes.json();
 
-      videoPath = path;
-      duration  = info.duration || 0;
+        if (info.error)   throw new Error(info.error);
+        if (stream.error) throw new Error('Stream : ' + stream.error);
 
-      // Barre d'info
-      infoBar.innerHTML = `
-        <span class="cutter-info-item">
-          <i data-lucide="clock-3"></i>
-          <strong>${fmtDur(duration)}</strong>
-        </span>
-        <span class="cutter-info-item">
-          <i data-lucide="monitor"></i>
-          <strong>${fmtRes(info.width, info.height)}</strong>
-          <span>${info.width}×${info.height}</span>
-        </span>
-        <span class="cutter-info-item">
-          <i data-lucide="film"></i>
-          <strong>${info.codec?.toUpperCase() || '?'}</strong>
-        </span>
-        <span class="cutter-info-item">
-          <i data-lucide="gauge"></i>
-          <span>${info.fps || '?'} fps</span>
-        </span>
-      `;
+        videoPath = path;          // URL YouTube originale — utilisée pour le téléchargement
+        duration  = info.duration || 0;
+
+        infoBar.innerHTML = `
+          <span class="cutter-info-item">
+            <i data-lucide="youtube"></i>
+            <strong>YouTube</strong>
+          </span>
+          <span class="cutter-info-item" style="flex:1;min-width:0;overflow:hidden">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px"
+            >${escHtml(info.title || '')}</span>
+          </span>
+          <span class="cutter-info-item">
+            <i data-lucide="clock-3"></i>
+            <strong>${fmtDur(duration)}</strong>
+          </span>
+          <span class="cutter-info-item">
+            <i data-lucide="monitor"></i>
+            <strong>${info.max_res || '?'}</strong>
+            <span class="cutter-yt-preview-note">(preview 720p)</span>
+          </span>
+        `;
+
+        scrubber.max  = duration;
+        scrubber.step = Math.max(0.001, duration / 10000);
+        timeDuration.textContent = fmtTc(duration);
+
+        // La source est l'URL de stream directe (pas l'URL YouTube)
+        videoEl.src = stream.url;
+        videoEl.load();
+
+      } else {
+        // ── Fichier local ────────────────────────────────────
+        const res  = await fetch('/api/video/info?path=' + encodeURIComponent(path));
+        const info = await res.json();
+        if (info.error) throw new Error(info.error);
+
+        videoPath = path;
+        duration  = info.duration || 0;
+
+        infoBar.innerHTML = `
+          <span class="cutter-info-item">
+            <i data-lucide="clock-3"></i>
+            <strong>${fmtDur(duration)}</strong>
+          </span>
+          <span class="cutter-info-item">
+            <i data-lucide="monitor"></i>
+            <strong>${fmtRes(info.width, info.height)}</strong>
+            <span>${info.width}×${info.height}</span>
+          </span>
+          <span class="cutter-info-item">
+            <i data-lucide="film"></i>
+            <strong>${info.codec?.toUpperCase() || '?'}</strong>
+          </span>
+          <span class="cutter-info-item">
+            <i data-lucide="gauge"></i>
+            <span>${info.fps || '?'} fps</span>
+          </span>
+        `;
+
+        scrubber.max  = duration;
+        scrubber.step = Math.max(0.001, duration / 10000);
+        timeDuration.textContent = fmtTc(duration);
+
+        videoEl.src = '/api/video/stream?path=' + encodeURIComponent(path);
+        videoEl.load();
+      }
+
       if (typeof lucide !== 'undefined') lucide.createIcons();
-
-      // Durée scrubber + affichage
-      scrubber.max = duration;
-      scrubber.step = Math.max(0.001, duration / 10000);
-      timeDuration.textContent = fmtTc(duration);
-
-      // Source vidéo
-      videoEl.src = '/api/video/stream?path=' + encodeURIComponent(path);
-      videoEl.load();
 
       // Réinitialiser l'état de découpe
       inTime = outTime = null;
@@ -507,7 +553,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const pct = d.progress || 0;
             progressFill.style.width = Math.max(pct, 2) + '%';
             progressPct.textContent  = pct + '%';
-            if (d.status === 'done')      { clearInterval(_pollTimer); resolve(); }
+            // Message adapté à la phase
+            if (d.phase === 'downloading') {
+              progressLbl.textContent = 'Téléchargement YouTube…';
+            } else {
+              progressLbl.textContent = `Découpe en cours… (${mode === 'fast' ? 'rapide' : 'précis'})`;
+            }
+            if (d.status === 'done')           { clearInterval(_pollTimer); resolve(); }
             else if (d.status === 'error')     { clearInterval(_pollTimer); reject(new Error(d.error || 'Erreur inconnue')); }
             else if (d.status === 'cancelled') { clearInterval(_pollTimer); reject(new Error('cancelled')); }
           } catch (_) { /* réseau transitoire */ }
@@ -560,10 +612,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ── Intégration : remplir le path depuis un autre onglet ─
-  // Expose une fonction globale pour que downloader.js puisse l'appeler
+  // Appelé par downloader.js quand l'utilisateur clique "Découper"
   window.cutterSetPath = (path) => {
     pathInput.value = path;
     window.switchTab('cutter');
+    // Déclencher le chargement automatiquement après l'animation du tab
+    setTimeout(loadVideo, 150);
   };
 
 });

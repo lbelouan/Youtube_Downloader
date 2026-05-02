@@ -575,6 +575,21 @@ body {
 }
 .preview-meta svg { width: 12px; height: 12px; }
 
+.preview-actions {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cutter-yt-preview-note {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 /* ── Progress ────────────────────────────────────────────── */
 .progress-section {
   margin-top: 20px;

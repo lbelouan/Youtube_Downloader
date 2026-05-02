@@ -239,6 +239,19 @@ document.addEventListener('DOMContentLoaded', () => {
     previewRes.innerHTML     = `<i data-lucide="monitor"></i> ${data.max_res}`;
     previewAudio.innerHTML   = `<i data-lucide="volume-2"></i> ${data.audio_codec || 'AAC'}`;
     previewBlock.style.display = 'block';
+
+    // Bouton "Découper" → ouvre le tab Découper avec l'URL pré-chargée
+    const previewActions = document.getElementById('previewActions');
+    const btnCutFromYt   = document.getElementById('btnCutFromYt');
+    if (previewActions && btnCutFromYt) {
+      previewActions.style.display = 'flex';
+      btnCutFromYt.onclick = () => {
+        if (typeof window.cutterSetPath === 'function') {
+          window.cutterSetPath(data.url || urlInput.value.trim());
+        }
+      };
+    }
+
     if (typeof lucide !== 'undefined') lucide.createIcons();
   }
 
