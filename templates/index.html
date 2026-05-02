@@ -331,25 +331,44 @@
           <h2>Assembler des extraits</h2>
         </div>
 
+        <script>window.IS_VERCEL = {{ 'true' if is_vercel else 'false' }};</script>
+
         {% if is_vercel %}
-        <!-- Avertissement Vercel -->
+        <!-- ── Mode Vercel : upload navigateur ── -->
         <div class="vercel-warning">
           <i data-lucide="cloud-off"></i>
           <div>
             <strong>Fonctionnalité limitée sur Vercel</strong>
-            <p>L'upload de fichiers MP4 est plafonné à ~4.5 MB sur Vercel. Pour assembler des vidéos sans limite, utilisez l'app en local.</p>
+            <p>L'upload est plafonné à ~4.5 MB. Pour assembler des vidéos sans limite, utilisez l'app en local.</p>
           </div>
         </div>
-        {% endif %}
-
-        <!-- Zone d'upload -->
-        <div class="assemble-upload-zone {% if is_vercel %}vercel-disabled{% endif %}" id="uploadZone">
+        <div class="assemble-upload-zone" id="uploadZone">
           <i data-lucide="upload-cloud"></i>
           <p>Glissez des fichiers MP4 ici</p>
           <span>ou cliquez pour parcourir</span>
         </div>
         <input type="file" id="fileInputHidden" multiple accept=".mp4,video/mp4">
-        <script>window.IS_VERCEL = {{ 'true' if is_vercel else 'false' }};</script>
+
+        {% else %}
+        <!-- ── Mode local : dossier sur disque ── -->
+        <div class="local-folder-box">
+          <div class="local-folder-header">
+            <i data-lucide="folder-open" class="local-folder-icon"></i>
+            <div class="local-folder-text">
+              <strong>Déposez vos vidéos dans ce dossier :</strong>
+              <code class="local-folder-path">{{ assembler_input_dir }}</code>
+            </div>
+            <button class="btn-secondary btn-sm" id="btnRefreshFiles">
+              <i data-lucide="refresh-cw"></i> Actualiser
+            </button>
+          </div>
+          <div class="local-folder-warning">
+            <i data-lucide="alert-triangle"></i>
+            <span>Les fichiers seront <strong>supprimés du dossier</strong> après assemblage —
+            conservez vos originaux ailleurs avant de lancer l'assemblage.</span>
+          </div>
+        </div>
+        {% endif %}
 
         <!-- Liste d'assemblage -->
         <div class="assemble-section">

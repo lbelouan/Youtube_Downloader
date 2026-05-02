@@ -1,36 +1,34 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const { escHtml } = window.appUtils;
+  const { escHtml, formatSize } = window.appUtils;
 
-  const uploadZone    = document.getElementById('uploadZone');
-  const fileInput     = document.getElementById('fileInputHidden');
-  const assembleList  = document.getElementById('assembleList');
-  const emptyState    = document.getElementById('assembleEmptyState');
+  const assembleList     = document.getElementById('assembleList');
+  const emptyState       = document.getElementById('assembleEmptyState');
   const assembleFileName = document.getElementById('assembleFileName');
-  const crfSlider     = document.getElementById('crfSlider');
-  const crfValue      = document.getElementById('crfValue');
-  const crfGroup      = document.getElementById('crfGroup');
-  const compatWarning = document.getElementById('compatWarning');
-  const btnAssemble   = document.getElementById('btnAssemble');
-  const progressSec   = document.getElementById('assembleProgressSection');
-  const progressFill  = document.getElementById('assembleProgressFill');
-  const progressPct   = document.getElementById('assembleProgressPct');
+  const crfSlider        = document.getElementById('crfSlider');
+  const crfValue         = document.getElementById('crfValue');
+  const crfGroup         = document.getElementById('crfGroup');
+  const compatWarning    = document.getElementById('compatWarning');
+  const btnAssemble      = document.getElementById('btnAssemble');
+  const progressSec      = document.getElementById('assembleProgressSection');
+  const progressFill     = document.getElementById('assembleProgressFill');
+  const progressPct      = document.getElementById('assembleProgressPct');
 
-  let uploadedFiles = []; // [{ filename, path }]
+  let uploadedFiles = []; // [{ filename, path, size? }]
 
   // ── CRF slider + auto ───────────────────────────────────
   const crfAuto = document.getElementById('crfAuto');
   const crfDesc = document.getElementById('crfDesc');
 
   const CRF_LEVELS = [
-    { max: 0,  label: 'Lossless — taille énorme, inutile en pratique',          cls: 'quality-high'   },
-    { max: 17, label: 'Très haute qualité — fichier volumineux',                 cls: 'quality-high'   },
-    { max: 18, label: 'Quasi-lossless — recommandé, difficile à distinguer de l\'original', cls: 'quality-high' },
-    { max: 22, label: 'Haute qualité — léger gain de taille',                   cls: 'quality-good'   },
-    { max: 23, label: 'Défaut x264 — bon équilibre qualité / taille',           cls: 'quality-good'   },
-    { max: 27, label: 'Qualité correcte — compression notable',                 cls: 'quality-medium' },
-    { max: 28, label: 'Compression visible — acceptable pour le web',           cls: 'quality-medium' },
-    { max: 40, label: 'Qualité réduite — artefacts visibles',                   cls: 'quality-low'    },
-    { max: 51, label: 'Qualité minimale — très dégradé',                        cls: 'quality-low'    },
+    { max: 0,  label: 'Lossless — taille énorme, inutile en pratique',                        cls: 'quality-high'   },
+    { max: 17, label: 'Très haute qualité — fichier volumineux',                               cls: 'quality-high'   },
+    { max: 18, label: 'Quasi-lossless — recommandé, difficile à distinguer de l\'original',   cls: 'quality-high'   },
+    { max: 22, label: 'Haute qualité — léger gain de taille',                                  cls: 'quality-good'   },
+    { max: 23, label: 'Défaut x264 — bon équilibre qualité / taille',                          cls: 'quality-good'   },
+    { max: 27, label: 'Qualité correcte — compression notable',                                cls: 'quality-medium' },
+    { max: 28, label: 'Compression visible — acceptable pour le web',                          cls: 'quality-medium' },
+    { max: 40, label: 'Qualité réduite — artefacts visibles',                                  cls: 'quality-low'    },
+    { max: 51, label: 'Qualité minimale — très dégradé',                                       cls: 'quality-low'    },
   ];
 
   function getCrfInfo(val) {
@@ -47,11 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setCrfAuto(auto) {
     if (auto) {
-      crfSlider.value    = 18;
-      crfSlider.disabled = true;
+      crfSlider.value         = 18;
+      crfSlider.disabled      = true;
       crfSlider.style.opacity = '0.4';
     } else {
-      crfSlider.disabled = false;
+      crfSlider.disabled      = false;
       crfSlider.style.opacity = '1';
     }
     updateCrfDesc();
@@ -59,8 +57,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   crfAuto.addEventListener('change', () => setCrfAuto(crfAuto.checked));
   crfSlider.addEventListener('input', updateCrfDesc);
-
-  // Init
   setCrfAuto(true);
   updateCrfDesc();
 
@@ -70,54 +66,90 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Upload zone ──────────────────────────────────────────
+  // ── Mode Vercel : upload navigateur ─────────────────────
   if (window.IS_VERCEL) {
-    uploadZone.title = 'Indisponible sur Vercel — utilisez l\'app en local';
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput  = document.getElementById('fileInputHidden');
+
+    uploadZone.addEventListener('click', () => fileInput.click());
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.classList.add('dragover');
+    });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove('dragover');
+      handleFiles([...e.dataTransfer.files]);
+    });
+    fileInput.addEventListener('change', () => {
+      handleFiles([...fileInput.files]);
+      fileInput.value = '';
+    });
+
+    async function handleFiles(files) {
+      const mp4s = files.filter(f => f.name.toLowerCase().endsWith('.mp4') || f.type === 'video/mp4');
+      if (!mp4s.length) return;
+      btnAssemble.disabled = true;
+      uploadZone.querySelector('p').textContent = `Upload de ${mp4s.length} fichier(s)...`;
+      const formData = new FormData();
+      mp4s.forEach(f => formData.append('files', f));
+      try {
+        const res  = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        uploadedFiles.push(...data.files);
+        renderAssembleList();
+      } catch (e) {
+        alert('Erreur upload : ' + e.message);
+      } finally {
+        uploadZone.querySelector('p').textContent = 'Glissez des fichiers MP4 ici';
+        btnAssemble.disabled = uploadedFiles.length === 0;
+      }
+    }
+
+  } else {
+    // ── Mode local : dossier sur disque ───────────────────
+    const btnRefresh = document.getElementById('btnRefreshFiles');
+    if (btnRefresh) {
+      btnRefresh.addEventListener('click', () => loadLocalFiles(true));
+    }
+    // Chargement initial
+    loadLocalFiles(false);
   }
 
-  uploadZone.addEventListener('click', () => {
-    if (window.IS_VERCEL) return;
-    fileInput.click();
-  });
-
-  uploadZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadZone.classList.add('dragover');
-  });
-  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-  uploadZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadZone.classList.remove('dragover');
-    handleFiles([...e.dataTransfer.files]);
-  });
-
-  fileInput.addEventListener('change', () => {
-    handleFiles([...fileInput.files]);
-    fileInput.value = '';
-  });
-
-  async function handleFiles(files) {
-    const mp4s = files.filter(f => f.name.endsWith('.mp4') || f.type === 'video/mp4');
-    if (!mp4s.length) return;
-
-    // Afficher état "upload en cours"
-    btnAssemble.disabled = true;
-    uploadZone.querySelector('p').textContent = `Upload de ${mp4s.length} fichier(s)...`;
-
-    const formData = new FormData();
-    mp4s.forEach(f => formData.append('files', f));
-
+  async function loadLocalFiles(showFeedback = false) {
+    const btnRefresh = document.getElementById('btnRefreshFiles');
+    if (btnRefresh) btnRefresh.disabled = true;
     try {
-      const res  = await fetch('/api/upload', { method: 'POST', body: formData });
+      const res  = await fetch('/api/assembler-local-files');
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      uploadedFiles.push(...data.files);
+      uploadedFiles = data.files || [];
       renderAssembleList();
+      if (showFeedback && uploadedFiles.length === 0) {
+        showFolderHint('Aucun fichier MP4 trouvé dans le dossier.');
+      } else if (showFeedback) {
+        showFolderHint(`${uploadedFiles.length} fichier(s) détecté(s).`);
+      }
     } catch (e) {
-      alert('Erreur upload : ' + e.message);
+      console.error('Erreur chargement fichiers locaux :', e);
     } finally {
-      uploadZone.querySelector('p').textContent = 'Glissez des fichiers MP4 ici';
+      if (btnRefresh) btnRefresh.disabled = false;
     }
+  }
+
+  function showFolderHint(msg) {
+    let hint = document.getElementById('folderHintMsg');
+    if (!hint) {
+      hint = document.createElement('p');
+      hint.id = 'folderHintMsg';
+      hint.className = 'folder-hint-msg';
+      const box = document.querySelector('.local-folder-box');
+      if (box) box.appendChild(hint);
+    }
+    hint.textContent = msg;
+    setTimeout(() => { if (hint) hint.textContent = ''; }, 4000);
   }
 
   // ── Liste d'assemblage ───────────────────────────────────
@@ -135,16 +167,17 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadedFiles.forEach((f, idx) => {
       const item = document.createElement('div');
       item.className = 'assemble-item';
+      const sizeStr = f.size ? ` · ${formatSize(f.size)}` : '';
       item.innerHTML = `
         <span class="assemble-item-idx">${idx + 1}</span>
         <div class="assemble-item-info">
           <div class="assemble-item-name">${escHtml(f.filename)}</div>
-          <div class="assemble-item-meta">${f.path ? 'Prêt' : ''}</div>
+          <div class="assemble-item-meta">Prêt${sizeStr}</div>
         </div>
         <div class="assemble-item-actions">
           <button class="btn-up" title="Monter">↑</button>
           <button class="btn-down" title="Descendre">↓</button>
-          <button class="btn-remove" title="Supprimer">🗑</button>
+          <button class="btn-remove" title="Retirer de la liste">✕</button>
         </div>
       `;
       item.querySelector('.btn-up').addEventListener('click', () => {
@@ -175,18 +208,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const mode     = document.querySelector('input[name="assembleMode"]:checked')?.value || 'auto';
     const crf      = parseInt(crfSlider.value);
 
-    btnAssemble.disabled = true;
-    progressSec.style.display   = 'block';
-    progressFill.style.width    = '30%';
+    btnAssemble.disabled       = true;
+    progressSec.style.display  = 'block';
+    progressFill.style.width   = '30%';
     progressFill.classList.add('running');
-    progressPct.textContent     = 'Assemblage...';
+    progressPct.textContent    = 'Assemblage...';
 
     try {
       const res = await fetch('/assemble', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          files:    uploadedFiles.map(f => f.path),
+        body:    JSON.stringify({
+          files: uploadedFiles.map(f => f.path),
           filename, mode, crf,
         }),
       });
@@ -196,7 +229,6 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(err.error);
       }
 
-      // Déclencher le téléchargement depuis le blob
       progressFill.style.width = '80%';
       progressPct.textContent  = 'Téléchargement...';
 
@@ -213,6 +245,8 @@ document.addEventListener('DOMContentLoaded', () => {
       progressFill.classList.remove('running');
       progressFill.style.width = '100%';
       progressPct.textContent  = '✅ Terminé';
+
+      // Vider la liste (les fichiers ont été supprimés côté serveur)
       uploadedFiles = [];
       renderAssembleList();
 

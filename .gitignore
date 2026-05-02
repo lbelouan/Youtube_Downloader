@@ -16,3 +16,7 @@ temp/
 # IDE
 .vscode/
 .idea/
+
+# Dossier d'entrée assembleur (contenu ignoré, dossier tracké)
+assembler_input/*
+!assembler_input/.gitkeep

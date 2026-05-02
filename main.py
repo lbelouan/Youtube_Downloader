@@ -9,7 +9,7 @@ from flask import (
     render_template, send_file, after_this_request,
 )
 
-from config import FLASK_HOST, FLASK_PORT, TEMP_DIR
+from config import FLASK_HOST, FLASK_PORT, TEMP_DIR, ASSEMBLER_INPUT_DIR
 
 # ── Setup ffmpeg (Vercel / environnements sans ffmpeg système) ───
 def _setup_ffmpeg():
@@ -44,7 +44,13 @@ IS_VERCEL = bool(os.environ.get("VERCEL"))
 @app.route("/")
 def index():
     missing = check_dependencies()
-    return render_template("index.html", missing_deps=missing, is_vercel=IS_VERCEL)
+    os.makedirs(ASSEMBLER_INPUT_DIR, exist_ok=True)
+    return render_template(
+        "index.html",
+        missing_deps=missing,
+        is_vercel=IS_VERCEL,
+        assembler_input_dir=ASSEMBLER_INPUT_DIR,
+    )
 
 
 # ── Info vidéo ──────────────────────────────────────────────
@@ -156,11 +162,28 @@ def api_upload():
     return jsonify({"files": saved})
 
 
+@app.route("/api/assembler-local-files")
+def assembler_local_files():
+    """Liste les MP4 présents dans le dossier d'entrée local (mode non-Vercel)."""
+    os.makedirs(ASSEMBLER_INPUT_DIR, exist_ok=True)
+    files = []
+    for fname in sorted(os.listdir(ASSEMBLER_INPUT_DIR)):
+        if fname.lower().endswith(".mp4"):
+            full_path = os.path.join(ASSEMBLER_INPUT_DIR, fname)
+            size = os.path.getsize(full_path)
+            files.append({"filename": fname, "path": full_path, "size": size})
+    return jsonify({"files": files})
+
+
 @app.route("/api/probe", methods=["POST"])
 def api_probe():
     data  = request.json
     files = data.get("files", [])
-    safe_files = [f for f in files if os.path.abspath(f).startswith(os.path.abspath(TEMP_DIR))]
+    allowed_dirs = [os.path.abspath(TEMP_DIR), os.path.abspath(ASSEMBLER_INPUT_DIR)]
+    safe_files = [
+        f for f in files
+        if any(os.path.abspath(f).startswith(d) for d in allowed_dirs)
+    ]
     try:
         from assembler import get_files_info, check_compatibility
         infos  = get_files_info(safe_files)
@@ -209,6 +232,7 @@ def assemble():
 
 if __name__ == "__main__":
     os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(ASSEMBLER_INPUT_DIR, exist_ok=True)
     missing = check_dependencies()
     if missing:
         print(f"\n⚠️  Dépendances manquantes : {', '.join(missing)}")
@@ -221,7 +245,9 @@ if __name__ == "__main__":
 
     print(f"\n🎬 YouTube Downloader démarré")
     print(f"   Local  : http://localhost:{FLASK_PORT}")
-    print(f"   Réseau : http://{local_ip}:{FLASK_PORT}\n")
+    print(f"   Réseau : http://{local_ip}:{FLASK_PORT}")
+    print(f"\n📂 Dossier assembleur : {ASSEMBLER_INPUT_DIR}")
+    print(f"   Déposez vos MP4 dans ce dossier puis cliquez sur 'Actualiser'\n")
 
     port = int(os.environ.get("PORT", FLASK_PORT))
     app.run(host=FLASK_HOST, port=port, threaded=True, debug=False)
