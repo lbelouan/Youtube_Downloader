@@ -1,6 +1,7 @@
 import subprocess
 import os
 import json
+import time
 from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_PRESET, DEFAULT_AUDIO_BITRATE
 
 
@@ -29,6 +30,72 @@ def get_video_stream(info: dict) -> dict:
     )
 
 
+def get_total_duration_us(files: list) -> int:
+    """Retourne la durée totale de tous les fichiers en microsecondes."""
+    total = 0
+    for f in files:
+        try:
+            info = probe_file(f)
+            dur = float(info.get("format", {}).get("duration", 0))
+            total += int(dur * 1_000_000)
+        except Exception:
+            pass
+    return total
+
+
+def _run_ffmpeg_progress(cmd: list, total_us: int, on_progress=None):
+    """
+    Lance une commande FFmpeg et appelle on_progress(pct) en temps réel.
+    Lit le fichier de progression FFmpeg (-progress) toutes les 0.5s.
+    """
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    progress_path = os.path.join(TEMP_DIR, f"ffprogress_{os.getpid()}_{int(time.time()*1000)}.txt")
+
+    # Injecter -progress avant le -y final
+    full_cmd = list(cmd)
+    try:
+        y_idx = full_cmd.index("-y")
+        full_cmd = full_cmd[:y_idx] + ["-progress", progress_path, "-nostats"] + full_cmd[y_idx:]
+    except ValueError:
+        full_cmd += ["-progress", progress_path, "-nostats"]
+
+    proc = subprocess.Popen(
+        full_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=_subprocess_env(),
+    )
+
+    last_pct = 0
+    try:
+        while proc.poll() is None:
+            time.sleep(0.5)
+            if on_progress and total_us > 0 and os.path.exists(progress_path):
+                try:
+                    with open(progress_path) as pf:
+                        content = pf.read()
+                    for line in reversed(content.splitlines()):
+                        if line.startswith("out_time_us="):
+                            us = int(line.split("=")[1])
+                            pct = min(99, int(us / total_us * 100))
+                            if pct > last_pct:
+                                last_pct = pct
+                                on_progress(pct)
+                            break
+                except Exception:
+                    pass
+
+        returncode = proc.wait()
+        stderr = proc.stderr.read().decode(errors="replace")
+        if returncode != 0:
+            raise RuntimeError(f"FFmpeg failed (code {returncode}):\n{stderr[-2000:]}")
+    finally:
+        try:
+            os.remove(progress_path)
+        except Exception:
+            pass
+
+
 def check_compatibility(files: list) -> bool:
     if len(files) < 2:
         return True
@@ -37,48 +104,44 @@ def check_compatibility(files: list) -> bool:
     for info in infos[1:]:
         vid = get_video_stream(info)
         if (
-            vid.get("codec_name")    != vid0.get("codec_name")    or
-            vid.get("width")         != vid0.get("width")         or
-            vid.get("height")        != vid0.get("height")        or
-            vid.get("r_frame_rate")  != vid0.get("r_frame_rate")
+            vid.get("codec_name")   != vid0.get("codec_name")   or
+            vid.get("width")        != vid0.get("width")         or
+            vid.get("height")       != vid0.get("height")        or
+            vid.get("r_frame_rate") != vid0.get("r_frame_rate")
         ):
             return False
     return True
 
 
-def assemble_concat(input_files: list, output_path: str):
+def assemble_concat(input_files: list, output_path: str, on_progress=None):
     list_path = os.path.join(TEMP_DIR, "concat_list.txt")
     os.makedirs(TEMP_DIR, exist_ok=True)
     with open(list_path, "w", encoding="utf-8") as f:
         for fp in input_files:
             f.write(f"file '{os.path.abspath(fp)}'\n")
     try:
-        result = subprocess.run(
-            [
-                "ffmpeg", "-f", "concat", "-safe", "0",
-                "-i", list_path,
-                "-c", "copy",
-                output_path, "-y",
-            ],
-            check=False,
-            capture_output=True,
-            env=_subprocess_env(),
-        )
-        if result.returncode != 0:
-            stderr = result.stderr.decode(errors="replace")
-            raise RuntimeError(f"FFmpeg concat failed (code {result.returncode}):\n{stderr[-2000:]}")
+        total_us = get_total_duration_us(input_files)
+        cmd = [
+            "ffmpeg", "-f", "concat", "-safe", "0",
+            "-i", list_path,
+            "-c", "copy",
+            output_path, "-y",
+        ]
+        _run_ffmpeg_progress(cmd, total_us, on_progress)
     finally:
         if os.path.exists(list_path):
             os.remove(list_path)
 
 
-def assemble_reencode(input_files: list, output_path: str, crf: int = DEFAULT_CRF):
-    """Réencode et concatène les fichiers en normalisant les résolutions et codecs."""
-    infos = [probe_file(f) for f in input_files]
-    n = len(input_files)
+def assemble_reencode(input_files: list, output_path: str,
+                      crf: int = DEFAULT_CRF, on_progress=None):
+    """Réencode et concatène en normalisant les résolutions et codecs."""
+    infos    = [probe_file(f) for f in input_files]
+    n        = len(input_files)
+    total_us = get_total_duration_us(input_files)
 
     # Résolution cible = celle du premier fichier
-    vid0 = get_video_stream(infos[0])
+    vid0     = get_video_stream(infos[0])
     target_w = vid0.get("width",  1920)
     target_h = vid0.get("height", 1080)
 
@@ -89,8 +152,7 @@ def assemble_reencode(input_files: list, output_path: str, crf: int = DEFAULT_CR
     ]
     all_have_audio = all(has_audio_list)
 
-    # Construction du filtre complexe
-    # — scale + pad chaque flux vidéo à la résolution cible
+    # Construction du filtre complexe avec normalisation de résolution
     filter_parts = []
     vid_labels   = []
     aud_labels   = []
@@ -117,14 +179,12 @@ def assemble_reencode(input_files: list, output_path: str, crf: int = DEFAULT_CR
 
     if all_have_audio:
         concat_in  = "".join(f"{v}{a}" for v, a in zip(vid_labels, aud_labels))
-        concat_out = f"concat=n={n}:v=1:a=1[outv][outa]"
-        filter_parts.append(concat_in + concat_out)
+        filter_parts.append(concat_in + f"concat=n={n}:v=1:a=1[outv][outa]")
         maps       = ["-map", "[outv]", "-map", "[outa]"]
         audio_opts = ["-c:a", "aac", "-b:a", DEFAULT_AUDIO_BITRATE]
     else:
         concat_in  = "".join(vid_labels)
-        concat_out = f"concat=n={n}:v=1:a=0[outv]"
-        filter_parts.append(concat_in + concat_out)
+        filter_parts.append(concat_in + f"concat=n={n}:v=1:a=0[outv]")
         maps       = ["-map", "[outv]"]
         audio_opts = []
 
@@ -134,31 +194,25 @@ def assemble_reencode(input_files: list, output_path: str, crf: int = DEFAULT_CR
     for f in input_files:
         inputs += ["-i", f]
 
-    result = subprocess.run(
-        [
-            "ffmpeg", *inputs,
-            "-filter_complex", filter_complex,
-            *maps,
-            "-c:v", "libx264", "-crf", str(crf), "-preset", DEFAULT_PRESET,
-            *audio_opts,
-            "-movflags", "+faststart",
-            output_path, "-y",
-        ],
-        check=False,
-        env=_subprocess_env(),
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")
-        raise RuntimeError(f"FFmpeg reencode failed (code {result.returncode}):\n{stderr[-2000:]}")
+    cmd = [
+        "ffmpeg", *inputs,
+        "-filter_complex", filter_complex,
+        *maps,
+        "-c:v", "libx264", "-crf", str(crf), "-preset", DEFAULT_PRESET,
+        *audio_opts,
+        "-movflags", "+faststart",
+        output_path, "-y",
+    ]
+    _run_ffmpeg_progress(cmd, total_us, on_progress)
 
 
-def assemble_auto(input_files: list, output_path: str, crf: int = DEFAULT_CRF):
+def assemble_auto(input_files: list, output_path: str,
+                  crf: int = DEFAULT_CRF, on_progress=None):
     os.makedirs(TEMP_DIR, exist_ok=True)
     if check_compatibility(input_files):
-        assemble_concat(input_files, output_path)
+        assemble_concat(input_files, output_path, on_progress)
     else:
-        assemble_reencode(input_files, output_path, crf)
+        assemble_reencode(input_files, output_path, crf, on_progress)
 
 
 def get_files_info(files: list) -> list:
@@ -171,13 +225,13 @@ def get_files_info(files: list) -> list:
             duration = float(fmt.get("duration", 0))
             mins, secs = divmod(int(duration), 60)
             result.append({
-                "path":       fp,
-                "filename":   os.path.basename(fp),
-                "width":      vid.get("width", 0),
-                "height":     vid.get("height", 0),
-                "duration":   f"{mins:02d}:{secs:02d}",
-                "codec":      vid.get("codec_name", "?"),
-                "fps":        vid.get("r_frame_rate", "?"),
+                "path":     fp,
+                "filename": os.path.basename(fp),
+                "width":    vid.get("width",  0),
+                "height":   vid.get("height", 0),
+                "duration": f"{mins:02d}:{secs:02d}",
+                "codec":    vid.get("codec_name", "?"),
+                "fps":      vid.get("r_frame_rate", "?"),
             })
         except Exception as e:
             result.append({"path": fp, "filename": os.path.basename(fp), "error": str(e)})

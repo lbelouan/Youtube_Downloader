@@ -208,14 +208,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const mode     = document.querySelector('input[name="assembleMode"]:checked')?.value || 'auto';
     const crf      = parseInt(crfSlider.value);
 
-    btnAssemble.disabled       = true;
-    progressSec.style.display  = 'block';
-    progressFill.style.width   = '30%';
+    btnAssemble.disabled      = true;
+    progressSec.style.display = 'block';
+    progressFill.style.width  = '2%';
     progressFill.classList.add('running');
-    progressPct.textContent    = 'Assemblage...';
+    progressPct.textContent   = '0%';
+
+    let pollInterval = null;
 
     try {
-      const res = await fetch('/assemble', {
+      // 1. Lancer l'assemblage en tâche de fond
+      const startRes = await fetch('/assemble', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -223,34 +226,59 @@ document.addEventListener('DOMContentLoaded', () => {
           filename, mode, crf,
         }),
       });
+      const startData = await startRes.json();
+      if (startData.error) throw new Error(startData.error);
+      const jobId = startData.job_id;
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
-        throw new Error(err.error);
-      }
+      // 2. Poller la progression toutes les secondes
+      await new Promise((resolve, reject) => {
+        pollInterval = setInterval(async () => {
+          try {
+            const res  = await fetch(`/api/assemble-progress/${jobId}`);
+            const data = await res.json();
 
-      progressFill.style.width = '80%';
+            if (data.error && data.status !== 'error') {
+              // Erreur réseau transitoire, on ignore
+              return;
+            }
+
+            const pct = data.progress || 0;
+            progressFill.style.width = Math.max(pct, 2) + '%';
+            progressPct.textContent  = pct + '%';
+
+            if (data.status === 'done') {
+              clearInterval(pollInterval);
+              resolve(jobId);
+            } else if (data.status === 'error') {
+              clearInterval(pollInterval);
+              reject(new Error(data.error || 'Erreur inconnue'));
+            }
+          } catch (e) {
+            // Erreur réseau transitoire, on continue
+          }
+        }, 1000);
+      });
+
+      // 3. Télécharger le fichier assemblé
+      progressFill.style.width = '100%';
       progressPct.textContent  = 'Téléchargement...';
 
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
-      a.href     = url;
+      a.href     = `/api/assemble-download/${jobId}`;
       a.download = `${filename}.mp4`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
 
       progressFill.classList.remove('running');
-      progressFill.style.width = '100%';
-      progressPct.textContent  = '✅ Terminé';
+      progressPct.textContent = '✅ Terminé';
 
       // Vider la liste (les fichiers ont été supprimés côté serveur)
       uploadedFiles = [];
       renderAssembleList();
 
     } catch (e) {
+      clearInterval(pollInterval);
       progressSec.style.display = 'none';
       alert('Erreur assemblage : ' + e.message);
     } finally {

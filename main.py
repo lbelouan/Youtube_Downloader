@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import time
+import threading
 
 from flask import (
     Flask, Response, request, jsonify,
@@ -40,6 +41,10 @@ def check_dependencies():
 
 
 IS_VERCEL = bool(os.environ.get("VERCEL"))
+
+# ── Jobs d'assemblage asynchrones ──────────────────────────
+_assemble_jobs   = {}   # job_id -> {status, progress, output, error}
+_assemble_inputs = {}   # job_id -> [input file paths]
 
 @app.route("/")
 def index():
@@ -195,39 +200,88 @@ def api_probe():
 
 @app.route("/assemble", methods=["POST"])
 def assemble():
+    """Lance l'assemblage en tâche de fond et retourne un job_id immédiatement."""
     data = request.json
     if not data or not data.get("files"):
         return jsonify({"error": "Fichiers manquants"}), 400
+
     safe_name = os.path.basename(data.get("filename") or "video_finale")
-    output    = os.path.join(TEMP_DIR, f"{safe_name}.mp4")
-    mode = data.get("mode", "auto")
-    crf  = int(data.get("crf", 18))
-    try:
-        from assembler import assemble_auto, assemble_concat, assemble_reencode
-        if mode == "concat":
-            assemble_concat(data["files"], output)
-        elif mode == "reencode":
-            assemble_reencode(data["files"], output, crf)
-        else:
-            assemble_auto(data["files"], output, crf)
+    output    = os.path.join(TEMP_DIR, f"{safe_name}_{int(time.time()*1000)}.mp4")
+    mode      = data.get("mode", "auto")
+    crf       = int(data.get("crf", 18))
+    job_id    = f"asm_{int(time.time()*1000)}"
 
-        @after_this_request
-        def cleanup_inputs(response):
-            for f in data["files"]:
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
-            return response
+    _assemble_jobs[job_id]   = {"status": "running", "progress": 0, "error": None}
+    _assemble_inputs[job_id] = list(data["files"])
 
-        return send_file(
-            output,
-            as_attachment=True,
-            download_name=f"{safe_name}.mp4",
-            mimetype="video/mp4",
-        )
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    def run():
+        try:
+            from assembler import assemble_auto, assemble_concat, assemble_reencode
+
+            def on_prog(pct):
+                _assemble_jobs[job_id]["progress"] = pct
+
+            if mode == "concat":
+                assemble_concat(data["files"], output, on_prog)
+            elif mode == "reencode":
+                assemble_reencode(data["files"], output, crf, on_prog)
+            else:
+                assemble_auto(data["files"], output, crf, on_prog)
+
+            _assemble_jobs[job_id]["progress"] = 100
+            _assemble_jobs[job_id]["status"]   = "done"
+            _assemble_jobs[job_id]["output"]   = output
+        except Exception as e:
+            _assemble_jobs[job_id]["status"] = "error"
+            _assemble_jobs[job_id]["error"]  = str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/assemble-progress/<job_id>")
+def assemble_progress_route(job_id):
+    """Retourne l'état et la progression d'un job d'assemblage."""
+    job = _assemble_jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job introuvable"}), 404
+    return jsonify({
+        "status":   job["status"],
+        "progress": job["progress"],
+        "error":    job.get("error"),
+    })
+
+
+@app.route("/api/assemble-download/<job_id>")
+def assemble_download(job_id):
+    """Envoie le fichier assemblé et nettoie les fichiers temporaires."""
+    job = _assemble_jobs.get(job_id)
+    if not job or job.get("status") != "done" or not job.get("output"):
+        return "Fichier introuvable", 404
+
+    path      = job["output"]
+    safe_name = os.path.basename(path)
+
+    @after_this_request
+    def cleanup(response):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        for f in _assemble_inputs.pop(job_id, []):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        _assemble_jobs.pop(job_id, None)
+        return response
+
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=safe_name,
+        mimetype="video/mp4",
+    )
 
 
 if __name__ == "__main__":

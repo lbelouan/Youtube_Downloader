@@ -7,7 +7,7 @@ QUEUE_FILE           = os.path.join(TEMP_DIR, "queue.json")
 ASSEMBLER_INPUT_DIR  = os.path.join(BASE_DIR, "assembler_input")
 
 DEFAULT_CRF           = 18
-DEFAULT_PRESET        = "slow"
+DEFAULT_PRESET        = "medium"
 DEFAULT_AUDIO_BITRATE = "256k"
 
 FLASK_HOST = "0.0.0.0"
