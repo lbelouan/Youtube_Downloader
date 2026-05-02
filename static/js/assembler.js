@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const crfGroup         = document.getElementById('crfGroup');
   const compatWarning    = document.getElementById('compatWarning');
   const btnAssemble      = document.getElementById('btnAssemble');
+  const btnCancelAsm     = document.getElementById('btnCancelAssemble');
   const progressSec      = document.getElementById('assembleProgressSection');
   const progressFill     = document.getElementById('assembleProgressFill');
   const progressPct      = document.getElementById('assembleProgressPct');
@@ -201,6 +202,32 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ── Assemblage ───────────────────────────────────────────
+  let _asmJobId      = null;
+  let _asmPollTimer  = null;
+  let _asmCancelled  = false;
+
+  function resetAssembleUI() {
+    clearInterval(_asmPollTimer);
+    progressFill.classList.remove('running');
+    progressSec.style.display = 'none';
+    progressFill.style.width  = '0%';
+    btnAssemble.disabled      = false;
+    _asmJobId     = null;
+    _asmPollTimer = null;
+    _asmCancelled = false;
+  }
+
+  // Bouton Annuler assemblage
+  btnCancelAsm.addEventListener('click', async () => {
+    if (!_asmJobId) return;
+    _asmCancelled = true;
+    clearInterval(_asmPollTimer);
+    try { await fetch(`/api/assemble-cancel/${_asmJobId}`, { method: 'POST' }); } catch (_) {}
+    progressPct.textContent = '⛔ Annulé';
+    progressFill.classList.remove('running');
+    setTimeout(resetAssembleUI, 1000);
+  });
+
   btnAssemble.addEventListener('click', async () => {
     if (uploadedFiles.length === 0) return;
 
@@ -208,13 +235,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const mode     = document.querySelector('input[name="assembleMode"]:checked')?.value || 'auto';
     const crf      = parseInt(crfSlider.value);
 
+    _asmCancelled             = false;
     btnAssemble.disabled      = true;
     progressSec.style.display = 'block';
     progressFill.style.width  = '2%';
     progressFill.classList.add('running');
     progressPct.textContent   = '0%';
-
-    let pollInterval = null;
 
     try {
       // 1. Lancer l'assemblage en tâche de fond
@@ -228,34 +254,31 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       const startData = await startRes.json();
       if (startData.error) throw new Error(startData.error);
-      const jobId = startData.job_id;
+      _asmJobId = startData.job_id;
 
       // 2. Poller la progression toutes les secondes
       await new Promise((resolve, reject) => {
-        pollInterval = setInterval(async () => {
+        _asmPollTimer = setInterval(async () => {
+          if (_asmCancelled) { clearInterval(_asmPollTimer); return; }
           try {
-            const res  = await fetch(`/api/assemble-progress/${jobId}`);
+            const res  = await fetch(`/api/assemble-progress/${_asmJobId}`);
             const data = await res.json();
-
-            if (data.error && data.status !== 'error') {
-              // Erreur réseau transitoire, on ignore
-              return;
-            }
 
             const pct = data.progress || 0;
             progressFill.style.width = Math.max(pct, 2) + '%';
             progressPct.textContent  = pct + '%';
 
             if (data.status === 'done') {
-              clearInterval(pollInterval);
-              resolve(jobId);
+              clearInterval(_asmPollTimer);
+              resolve();
             } else if (data.status === 'error') {
-              clearInterval(pollInterval);
+              clearInterval(_asmPollTimer);
               reject(new Error(data.error || 'Erreur inconnue'));
+            } else if (data.status === 'cancelled') {
+              clearInterval(_asmPollTimer);
+              reject(new Error('cancelled'));
             }
-          } catch (e) {
-            // Erreur réseau transitoire, on continue
-          }
+          } catch (_) { /* erreur réseau transitoire */ }
         }, 1000);
       });
 
@@ -264,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
       progressPct.textContent  = 'Téléchargement...';
 
       const a    = document.createElement('a');
-      a.href     = `/api/assemble-download/${jobId}`;
+      a.href     = `/api/assemble-download/${_asmJobId}`;
       a.download = `${filename}.mp4`;
       document.body.appendChild(a);
       a.click();
@@ -272,17 +295,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       progressFill.classList.remove('running');
       progressPct.textContent = '✅ Terminé';
-
-      // Vider la liste (les fichiers ont été supprimés côté serveur)
       uploadedFiles = [];
       renderAssembleList();
+      setTimeout(resetAssembleUI, 3000);
 
     } catch (e) {
-      clearInterval(pollInterval);
-      progressSec.style.display = 'none';
-      alert('Erreur assemblage : ' + e.message);
-    } finally {
-      btnAssemble.disabled = false;
+      if (e.message !== 'cancelled') {
+        progressSec.style.display = 'none';
+        alert('Erreur assemblage : ' + e.message);
+      }
+      resetAssembleUI();
     }
   });
 });

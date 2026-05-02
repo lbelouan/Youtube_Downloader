@@ -590,6 +590,27 @@ body {
 .progress-label-text { font-size: var(--text-sm); color: var(--color-text-secondary); font-weight: 500; }
 .progress-pct        { font-size: var(--text-sm); font-weight: 700; color: var(--color-accent); }
 
+.btn-cancel-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 68, 68, 0.4);
+  background: rgba(255, 68, 68, 0.08);
+  color: var(--color-error);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  margin-left: auto;
+}
+.btn-cancel-inline:hover {
+  background: rgba(255, 68, 68, 0.18);
+  border-color: var(--color-error);
+}
+.btn-cancel-inline svg { width: 12px; height: 12px; }
+
 .progress-track {
   background: var(--color-bg-input);
   border-radius: var(--radius-full);

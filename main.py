@@ -214,6 +214,9 @@ def assemble():
     _assemble_jobs[job_id]   = {"status": "running", "progress": 0, "error": None}
     _assemble_inputs[job_id] = list(data["files"])
 
+    proc_holder = {}
+    _assemble_jobs[job_id]["proc_holder"] = proc_holder
+
     def run():
         try:
             from assembler import assemble_auto, assemble_concat, assemble_reencode
@@ -222,21 +225,59 @@ def assemble():
                 _assemble_jobs[job_id]["progress"] = pct
 
             if mode == "concat":
-                assemble_concat(data["files"], output, on_prog)
+                assemble_concat(data["files"], output, on_prog, proc_holder)
             elif mode == "reencode":
-                assemble_reencode(data["files"], output, crf, on_prog)
+                assemble_reencode(data["files"], output, crf, on_prog, proc_holder)
             else:
-                assemble_auto(data["files"], output, crf, on_prog)
+                assemble_auto(data["files"], output, crf, on_prog, proc_holder)
 
             _assemble_jobs[job_id]["progress"] = 100
             _assemble_jobs[job_id]["status"]   = "done"
             _assemble_jobs[job_id]["output"]   = output
         except Exception as e:
-            _assemble_jobs[job_id]["status"] = "error"
-            _assemble_jobs[job_id]["error"]  = str(e)
+            err = str(e)
+            if err == "cancelled":
+                _assemble_jobs[job_id]["status"] = "cancelled"
+            else:
+                _assemble_jobs[job_id]["status"] = "error"
+                _assemble_jobs[job_id]["error"]  = err
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/assemble-cancel/<job_id>", methods=["POST"])
+def assemble_cancel(job_id):
+    """Tue le process FFmpeg et nettoie les fichiers du job."""
+    job = _assemble_jobs.get(job_id)
+    if not job:
+        return jsonify({"status": "ok"})  # déjà terminé, pas d'erreur
+
+    # Tuer FFmpeg
+    proc = job.get("proc_holder", {}).get("proc")
+    if proc:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    job["status"] = "cancelled"
+
+    # Nettoyage fichiers d'entrée
+    for f in _assemble_inputs.pop(job_id, []):
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+    # Nettoyage fichier de sortie partiel
+    out = job.get("output")
+    if out:
+        try:
+            os.remove(out)
+        except Exception:
+            pass
+    _assemble_jobs.pop(job_id, None)
+    return jsonify({"status": "cancelled"})
 
 
 @app.route("/api/assemble-progress/<job_id>")

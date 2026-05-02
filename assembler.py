@@ -43,10 +43,10 @@ def get_total_duration_us(files: list) -> int:
     return total
 
 
-def _run_ffmpeg_progress(cmd: list, total_us: int, on_progress=None):
+def _run_ffmpeg_progress(cmd: list, total_us: int, on_progress=None, proc_holder: dict = None):
     """
     Lance une commande FFmpeg et appelle on_progress(pct) en temps réel.
-    Lit le fichier de progression FFmpeg (-progress) toutes les 0.5s.
+    proc_holder est un dict mutable pour stocker la référence du process (annulation).
     """
     os.makedirs(TEMP_DIR, exist_ok=True)
     progress_path = os.path.join(TEMP_DIR, f"ffprogress_{os.getpid()}_{int(time.time()*1000)}.txt")
@@ -65,6 +65,10 @@ def _run_ffmpeg_progress(cmd: list, total_us: int, on_progress=None):
         stderr=subprocess.PIPE,
         env=_subprocess_env(),
     )
+
+    # Exposer le process pour permettre l'annulation externe
+    if proc_holder is not None:
+        proc_holder["proc"] = proc
 
     last_pct = 0
     try:
@@ -86,8 +90,14 @@ def _run_ffmpeg_progress(cmd: list, total_us: int, on_progress=None):
                     pass
 
         returncode = proc.wait()
-        stderr = proc.stderr.read().decode(errors="replace")
-        if returncode != 0:
+        if proc_holder is not None:
+            proc_holder.pop("proc", None)
+
+        # Si annulé (SIGTERM → returncode -15 ou 1), on lève une erreur spécifique
+        if returncode not in (0,):
+            stderr = proc.stderr.read().decode(errors="replace")
+            if returncode in (-15, 255):
+                raise RuntimeError("cancelled")
             raise RuntimeError(f"FFmpeg failed (code {returncode}):\n{stderr[-2000:]}")
     finally:
         try:
@@ -113,7 +123,7 @@ def check_compatibility(files: list) -> bool:
     return True
 
 
-def assemble_concat(input_files: list, output_path: str, on_progress=None):
+def assemble_concat(input_files: list, output_path: str, on_progress=None, proc_holder: dict = None):
     list_path = os.path.join(TEMP_DIR, "concat_list.txt")
     os.makedirs(TEMP_DIR, exist_ok=True)
     with open(list_path, "w", encoding="utf-8") as f:
@@ -127,14 +137,14 @@ def assemble_concat(input_files: list, output_path: str, on_progress=None):
             "-c", "copy",
             output_path, "-y",
         ]
-        _run_ffmpeg_progress(cmd, total_us, on_progress)
+        _run_ffmpeg_progress(cmd, total_us, on_progress, proc_holder)
     finally:
         if os.path.exists(list_path):
             os.remove(list_path)
 
 
 def assemble_reencode(input_files: list, output_path: str,
-                      crf: int = DEFAULT_CRF, on_progress=None):
+                      crf: int = DEFAULT_CRF, on_progress=None, proc_holder: dict = None):
     """Réencode et concatène en normalisant les résolutions et codecs."""
     infos    = [probe_file(f) for f in input_files]
     n        = len(input_files)
@@ -203,16 +213,16 @@ def assemble_reencode(input_files: list, output_path: str,
         "-movflags", "+faststart",
         output_path, "-y",
     ]
-    _run_ffmpeg_progress(cmd, total_us, on_progress)
+    _run_ffmpeg_progress(cmd, total_us, on_progress, proc_holder)
 
 
 def assemble_auto(input_files: list, output_path: str,
-                  crf: int = DEFAULT_CRF, on_progress=None):
+                  crf: int = DEFAULT_CRF, on_progress=None, proc_holder: dict = None):
     os.makedirs(TEMP_DIR, exist_ok=True)
     if check_compatibility(input_files):
-        assemble_concat(input_files, output_path, on_progress)
+        assemble_concat(input_files, output_path, on_progress, proc_holder)
     else:
-        assemble_reencode(input_files, output_path, crf, on_progress)
+        assemble_reencode(input_files, output_path, crf, on_progress, proc_holder)
 
 
 def get_files_info(files: list) -> list:

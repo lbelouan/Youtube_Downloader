@@ -15,11 +15,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const fileNameInput= document.getElementById('fileName');
   const btnAddQueue  = document.getElementById('btnAddQueue');
   const btnDownload  = document.getElementById('btnDownloadNow');
-  const progressSec  = document.getElementById('dlProgressSection');
-  const progressFill = document.getElementById('dlProgressFill');
-  const progressPct  = document.getElementById('dlProgressPct');
-  const logConsole   = document.getElementById('dlLog');
-  const btnGoDownload= document.getElementById('btnGoDownload');
+  const progressSec    = document.getElementById('dlProgressSection');
+  const progressFill   = document.getElementById('dlProgressFill');
+  const progressPct    = document.getElementById('dlProgressPct');
+  const logConsole     = document.getElementById('dlLog');
+  const btnCancelDl    = document.getElementById('btnCancelDownload');
+  const btnGoDownload  = document.getElementById('btnGoDownload');
 
   let videoDuration = null;
   let videoInfo     = null;
@@ -280,30 +281,50 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Télécharger maintenant ───────────────────────────────
+  let _dlTaskId = null;
+  let _dlSse    = null;
+
+  function resetDownloadUI() {
+    btnDownload.disabled      = false;
+    progressFill.classList.remove('running');
+    progressSec.style.display = 'none';
+    progressFill.style.width  = '0%';
+    _dlTaskId = null;
+    _dlSse    = null;
+  }
+
+  // Bouton Annuler téléchargement
+  btnCancelDl.addEventListener('click', async () => {
+    if (_dlSse) { _dlSse.close(); }
+    if (_dlTaskId) {
+      try { await postJSON(`/queue/cancel/${_dlTaskId}`, {}); } catch (_) {}
+    }
+    logLine('⛔ Annulé');
+    setTimeout(resetDownloadUI, 800);
+  });
+
   btnDownload.addEventListener('click', async () => {
     const task = buildTask();
     if (!task) return;
 
-    btnDownload.disabled = true;
+    btnDownload.disabled      = true;
     progressSec.style.display = 'block';
     progressFill.style.width  = '0%';
     progressFill.classList.add('running');
     progressPct.textContent   = '0%';
     logConsole.innerHTML      = '<span class="log-line">Ajout à la file d\'attente...</span>';
-
-    let taskId = null;
-    let sse    = null;
+    _dlTaskId = null;
 
     try {
       const res = await postJSON('/queue/add', task);
       if (res.error) throw new Error(res.error);
-      taskId = res.task_id;
+      _dlTaskId = res.task_id;
       logLine('Téléchargement démarré...');
 
-      sse = new EventSource('/stream/queue');
-      sse.onmessage = (event) => {
+      _dlSse = new EventSource('/stream/queue');
+      _dlSse.onmessage = (event) => {
         const queue = JSON.parse(event.data);
-        const mine  = queue.find(t => t.id === taskId);
+        const mine  = queue.find(t => t.id === _dlTaskId);
         if (!mine) return;
 
         const pct = mine.progress || 0;
@@ -312,28 +333,26 @@ document.addEventListener('DOMContentLoaded', () => {
         logLine(`[download] ${pct}%`);
 
         if (mine.status === 'done') {
-          sse.close();
+          _dlSse.close();
           progressFill.classList.remove('running');
           progressFill.style.width = '100%';
           progressPct.textContent  = '100%';
           logLine('✅ Terminé — démarrage du téléchargement...');
-          // Déclencher le téléchargement navigateur
-          window.location.href = `/download/file/${encodeURIComponent(taskId)}`;
-          btnDownload.disabled = false;
-          setTimeout(() => { progressSec.style.display = 'none'; }, 3000);
+          window.location.href = `/download/file/${encodeURIComponent(_dlTaskId)}`;
+          setTimeout(resetDownloadUI, 3000);
         } else if (mine.status === 'error') {
-          sse.close();
+          _dlSse.close();
           logLine('❌ Erreur : ' + (mine.error || 'inconnue'));
           btnDownload.disabled = false;
         } else if (mine.status === 'cancelled') {
-          sse.close();
+          _dlSse.close();
           logLine('⛔ Annulé');
-          btnDownload.disabled = false;
+          setTimeout(resetDownloadUI, 800);
         }
       };
 
-      sse.onerror = () => {
-        sse.close();
+      _dlSse.onerror = () => {
+        _dlSse.close();
         btnDownload.disabled = false;
       };
 

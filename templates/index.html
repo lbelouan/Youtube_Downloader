@@ -277,6 +277,9 @@
           <div class="progress-header">
             <span class="progress-label-text">Progression</span>
             <span class="progress-pct" id="dlProgressPct">0%</span>
+            <button class="btn-cancel-inline" id="btnCancelDownload" title="Annuler">
+              <i data-lucide="x"></i> Annuler
+            </button>
           </div>
           <div class="progress-track">
             <div class="progress-fill running" id="dlProgressFill" style="width:0%"></div>
@@ -446,10 +449,13 @@
         <div class="progress-section" id="assembleProgressSection" style="display:none">
           <div class="progress-header">
             <span class="progress-label-text">Assemblage en cours...</span>
-            <span class="progress-pct" id="assembleProgressPct">...</span>
+            <span class="progress-pct" id="assembleProgressPct">0%</span>
+            <button class="btn-cancel-inline" id="btnCancelAssemble" title="Annuler">
+              <i data-lucide="x"></i> Annuler
+            </button>
           </div>
           <div class="progress-track">
-            <div class="progress-fill running" id="assembleProgressFill" style="width:60%"></div>
+            <div class="progress-fill running" id="assembleProgressFill" style="width:0%"></div>
           </div>
         </div>
       </div>
