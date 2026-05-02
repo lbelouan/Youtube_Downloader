@@ -32,6 +32,10 @@ def check_dependencies():
 _assemble_jobs   = {}   # job_id -> {status, progress, output, error}
 _assemble_inputs = {}   # job_id -> [input file paths]
 
+# ── Jobs de découpe asynchrones ─────────────────────────────
+_cut_jobs   = {}   # job_id -> {status, progress, output_files, zip_path, error}
+_cut_inputs = {}   # job_id -> input_path
+
 @app.route("/")
 def index():
     missing = check_dependencies()
@@ -292,6 +296,192 @@ def assemble_download(job_id):
         download_name=safe_name,
         mimetype="video/mp4",
     )
+
+
+# ══════════════════════════════════════════════════════════
+# ── Découpe ────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════
+
+@app.route("/api/video/stream")
+def api_video_stream():
+    """Stream un fichier vidéo local avec support Range (seek navigateur)."""
+    path = request.args.get("path", "").strip()
+    if not path or not os.path.isfile(path):
+        return "Fichier introuvable", 404
+    try:
+        return send_file(path, mimetype="video/mp4", conditional=True, etag=True)
+    except Exception as e:
+        return str(e), 500
+
+
+@app.route("/api/video/info")
+def api_video_info():
+    """Retourne les métadonnées d'un fichier vidéo local."""
+    path = request.args.get("path", "").strip()
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": "Fichier introuvable"}), 404
+    try:
+        from assembler import probe_file, get_video_stream
+        info     = probe_file(path)
+        vid      = get_video_stream(info)
+        fmt      = info.get("format", {})
+        duration = float(fmt.get("duration", 0))
+        return jsonify({
+            "duration": duration,
+            "width":    vid.get("width",       0),
+            "height":   vid.get("height",      0),
+            "codec":    vid.get("codec_name",  "?"),
+            "fps":      vid.get("r_frame_rate","?"),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cut/start", methods=["POST"])
+def cut_start():
+    """Lance un export de segments en tâche de fond, retourne un job_id."""
+    data = request.json
+    if not data or not data.get("input") or not data.get("segments"):
+        return jsonify({"error": "Paramètres manquants"}), 400
+
+    input_path = data["input"]
+    if not os.path.isfile(input_path):
+        return jsonify({"error": "Fichier source introuvable"}), 404
+
+    segments = data["segments"]
+    mode     = data.get("mode", "fast")
+    crf      = int(data.get("crf", 18))
+    job_id   = f"cut_{int(time.time() * 1000)}"
+
+    proc_holder = {}
+    _cut_jobs[job_id] = {
+        "status":      "running",
+        "progress":    0,
+        "error":       None,
+        "proc_holder": proc_holder,
+        "n_segments":  len(segments),
+    }
+    _cut_inputs[job_id] = input_path
+
+    def run():
+        try:
+            from cutter import cut_segments_batch, make_zip
+
+            def on_prog(pct):
+                _cut_jobs[job_id]["progress"] = pct
+
+            files = cut_segments_batch(
+                input_path, segments, mode, crf, on_prog, proc_holder
+            )
+
+            # ZIP si plusieurs segments, MP4 direct si un seul
+            if len(files) == 1:
+                _cut_jobs[job_id]["output_files"] = files
+                _cut_jobs[job_id]["zip_path"]     = None
+            else:
+                zip_path = files[0].rsplit("/", 1)[0] + ".zip"
+                make_zip(files, zip_path)
+                _cut_jobs[job_id]["output_files"] = files
+                _cut_jobs[job_id]["zip_path"]     = zip_path
+
+            _cut_jobs[job_id]["progress"] = 100
+            _cut_jobs[job_id]["status"]   = "done"
+
+        except Exception as e:
+            err = str(e)
+            if err == "cancelled":
+                _cut_jobs[job_id]["status"] = "cancelled"
+            else:
+                _cut_jobs[job_id]["status"] = "error"
+                _cut_jobs[job_id]["error"]  = err
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/cut/progress/<job_id>")
+def cut_progress(job_id):
+    job = _cut_jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job introuvable"}), 404
+    return jsonify({
+        "status":   job["status"],
+        "progress": job["progress"],
+        "error":    job.get("error"),
+    })
+
+
+@app.route("/api/cut/download/<job_id>")
+def cut_download(job_id):
+    """Envoie le(s) fichier(s) exporté(s) et nettoie les temporaires."""
+    job = _cut_jobs.get(job_id)
+    if not job or job.get("status") != "done":
+        return "Fichier introuvable", 404
+
+    files    = job.get("output_files", [])
+    zip_path = job.get("zip_path")
+
+    if zip_path and os.path.isfile(zip_path):
+        send_path  = zip_path
+        dl_name    = "segments.zip"
+        mime       = "application/zip"
+    elif files and os.path.isfile(files[0]):
+        send_path  = files[0]
+        dl_name    = os.path.basename(files[0])
+        mime       = "video/mp4"
+    else:
+        return "Fichier introuvable", 404
+
+    @after_this_request
+    def cleanup(response):
+        try:
+            import shutil as _sh
+            out_dir = os.path.dirname(files[0]) if files else None
+            if out_dir and os.path.isdir(out_dir):
+                _sh.rmtree(out_dir, ignore_errors=True)
+            if zip_path and os.path.isfile(zip_path):
+                os.remove(zip_path)
+        except Exception:
+            pass
+        _cut_jobs.pop(job_id, None)
+        _cut_inputs.pop(job_id, None)
+        return response
+
+    return send_file(send_path, as_attachment=True, download_name=dl_name, mimetype=mime)
+
+
+@app.route("/api/cut/cancel/<job_id>", methods=["POST"])
+def cut_cancel(job_id):
+    """Tue le process FFmpeg actif et nettoie le job."""
+    job = _cut_jobs.get(job_id)
+    if not job:
+        return jsonify({"status": "ok"})
+
+    proc = job.get("proc_holder", {}).get("proc")
+    if proc:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    job["status"] = "cancelled"
+
+    # Nettoyage
+    try:
+        import shutil as _sh
+        files   = job.get("output_files", [])
+        out_dir = os.path.dirname(files[0]) if files else None
+        if out_dir and os.path.isdir(out_dir):
+            _sh.rmtree(out_dir, ignore_errors=True)
+        zip_path = job.get("zip_path")
+        if zip_path and os.path.isfile(zip_path):
+            os.remove(zip_path)
+    except Exception:
+        pass
+
+    _cut_jobs.pop(job_id, None)
+    _cut_inputs.pop(job_id, None)
+    return jsonify({"status": "cancelled"})
 
 
 if __name__ == "__main__":

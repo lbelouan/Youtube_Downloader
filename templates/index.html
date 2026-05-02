@@ -57,6 +57,9 @@
         <i data-lucide="list-ordered"></i><span>File d'attente</span>
         <span class="queue-badge" id="queueBadge" style="display:none">0</span>
       </button>
+      <button class="tab-btn" data-tab="cutter">
+        <i data-lucide="clapperboard"></i><span>Découper</span>
+      </button>
       <button class="tab-btn" data-tab="assemble">
         <i data-lucide="scissors"></i><span>Assembler</span>
       </button>
@@ -325,7 +328,161 @@
     </section>
 
     <!-- ══════════════════════════════════════
-         ONGLET 3 — ASSEMBLAGE
+         ONGLET 3 — DÉCOUPE
+    ══════════════════════════════════════ -->
+    <section class="tab-panel" id="tab-cutter">
+      <div class="card">
+        <div class="card-header">
+          <i data-lucide="clapperboard"></i>
+          <h2>Découper une vidéo</h2>
+        </div>
+
+        <!-- Source vidéo -->
+        <div class="form-group">
+          <label class="form-label">Fichier vidéo source</label>
+          <div class="cutter-source-row">
+            <input type="text" id="cutterPathInput" class="form-input"
+              placeholder="/Users/vous/Movies/video.mp4"
+              autocomplete="off" spellcheck="false">
+            <button class="btn-secondary" id="btnLoadVideo">
+              <i data-lucide="folder-open"></i><span>Charger</span>
+            </button>
+          </div>
+          <span class="field-error" id="cutterPathError"></span>
+        </div>
+
+        <!-- Section player (masquée jusqu'au chargement) -->
+        <div id="cutterPlayerSection" style="display:none">
+
+          <!-- Barre info vidéo -->
+          <div class="cutter-info-bar" id="cutterInfoBar"></div>
+
+          <!-- Player vidéo -->
+          <div class="cutter-video-wrapper">
+            <video id="cutterVideo" preload="metadata" playsinline></video>
+          </div>
+
+          <!-- Scrubber + temps -->
+          <div class="cutter-controls">
+            <span class="cutter-time" id="cutterTimeCurrent">00:00:00.000</span>
+            <input type="range" id="cutterScrubber" class="cutter-scrubber"
+              min="0" max="1" step="0.0001" value="0">
+            <span class="cutter-time" id="cutterTimeDuration">00:00:00.000</span>
+          </div>
+
+          <!-- Transport -->
+          <div class="cutter-transport">
+            <button class="btn-ghost btn-sm" id="btnCutterBack5" title="−5 s">
+              <i data-lucide="rotate-ccw"></i><span class="transport-label">5s</span>
+            </button>
+            <button class="btn-secondary cutter-playpause" id="btnCutterPlayPause">
+              <i data-lucide="play" id="cutterPlayIcon"></i>
+            </button>
+            <button class="btn-ghost btn-sm" id="btnCutterFwd5" title="+5 s">
+              <i data-lucide="rotate-cw"></i><span class="transport-label">5s</span>
+            </button>
+            <button class="btn-ghost btn-xs cutter-speed-btn" id="btnCutterSpeed" title="Vitesse">1×</button>
+            <label class="cutter-loop-label" title="Boucler le segment IN→OUT">
+              <input type="checkbox" id="cutterLoopSegment">
+              <i data-lucide="repeat"></i>
+              <span>Loop</span>
+            </label>
+          </div>
+
+          <!-- Timeline canvas -->
+          <canvas id="cutterTimeline" class="cutter-timeline"></canvas>
+
+          <!-- IN / OUT -->
+          <div class="cut-inout-row">
+            <div class="cut-marker-group">
+              <button class="btn-secondary btn-sm" id="btnSetIn">
+                <i data-lucide="log-in"></i> Marquer IN
+              </button>
+              <code class="cut-marker-time" id="cutInTime">--:--:--.---</code>
+            </div>
+
+            <button class="btn-primary" id="btnAddSegment" disabled>
+              <i data-lucide="plus-circle"></i> Ajouter
+            </button>
+
+            <div class="cut-marker-group cut-marker-right">
+              <code class="cut-marker-time" id="cutOutTime">--:--:--.---</code>
+              <button class="btn-secondary btn-sm" id="btnSetOut">
+                Marquer OUT <i data-lucide="log-out"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Liste des segments -->
+          <div class="cut-segments-section">
+            <div class="cut-segments-header">
+              <label class="form-label">
+                Segments
+                <span class="cut-seg-count" id="cutSegmentCount">0</span>
+              </label>
+              <button class="btn-ghost btn-xs" id="btnClearSegments" style="display:none">
+                <i data-lucide="trash-2"></i> Tout effacer
+              </button>
+            </div>
+            <div id="cutterSegmentsList">
+              <div class="empty-state" id="cutEmptyState">
+                <i data-lucide="list"></i>
+                <p>Aucun segment défini.</p>
+                <p class="empty-hint">Placez IN et OUT, puis cliquez sur Ajouter.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Export -->
+          <div id="cutterExportSection" style="display:none">
+            <div class="form-group">
+              <label class="form-label">Mode d'export</label>
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="cutMode" value="fast" checked>
+                  <div class="radio-content">
+                    <span class="radio-label">
+                      Rapide
+                      <span class="badge-recommended">Recommandé</span>
+                    </span>
+                    <span class="radio-desc">Stream copy — sans réencodage, ultra rapide</span>
+                  </div>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="cutMode" value="precise">
+                  <div class="radio-content">
+                    <span class="radio-label">Précis</span>
+                    <span class="radio-desc">Réencodage VideoToolbox (GPU) — frame-accurate</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <button class="btn-primary btn-full" id="btnExportSegments">
+              <i data-lucide="download"></i>
+              <span id="btnExportLabel">Exporter</span>
+            </button>
+
+            <div class="progress-section" id="cutterProgressSection" style="display:none">
+              <div class="progress-header">
+                <span class="progress-label-text" id="cutterProgressLabel">Export en cours…</span>
+                <span class="progress-pct" id="cutterProgressPct">0%</span>
+                <button class="btn-cancel-inline" id="btnCancelCut">
+                  <i data-lucide="x"></i> Annuler
+                </button>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill running" id="cutterProgressFill" style="width:0%"></div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /cutterPlayerSection -->
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         ONGLET 4 — ASSEMBLAGE
     ══════════════════════════════════════ -->
     <section class="tab-panel" id="tab-assemble">
       <div class="card">
@@ -453,6 +610,9 @@
     <i data-lucide="list-ordered"></i><span>File</span>
     <span class="queue-badge mobile" id="queueBadgeMobile" style="display:none">0</span>
   </button>
+  <button class="bottom-nav-item" data-tab="cutter">
+    <i data-lucide="clapperboard"></i><span>Découper</span>
+  </button>
   <button class="bottom-nav-item" data-tab="assemble">
     <i data-lucide="scissors"></i><span>Assembler</span>
   </button>
@@ -461,6 +621,7 @@
 <script src="/static/js/app.js"></script>
 <script src="/static/js/downloader.js"></script>
 <script src="/static/js/queue.js"></script>
+<script src="/static/js/cutter.js"></script>
 <script src="/static/js/assembler.js"></script>
 <script>lucide.createIcons();</script>
 </body>
