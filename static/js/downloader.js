@@ -79,18 +79,43 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.key === 'Escape') closePopover();
     });
 
-    // Boutons +/-
+    // Boutons +/- avec long press (maintien = défilement continu)
     popover.querySelectorAll('.tc-spin-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const spin = btn.dataset.spin;
-        const dir  = btn.dataset.dir;
+      let holdTimer = null;
+      let holdInterval = null;
+
+      function step() {
+        const spin  = btn.dataset.spin;
+        const dir   = btn.dataset.dir;
         const field = spin.endsWith('-h') ? hInput : spin.endsWith('-m') ? mInput : sInput;
         const max   = field === hInput ? 23 : 59;
         let val = parseInt(field.value) || 0;
         val = dir === 'up' ? Math.min(val + 1, max) : Math.max(val - 1, 0);
         field.value = val;
-      });
+      }
+
+      function startHold() {
+        step(); // premier clic immédiat
+        holdTimer = setTimeout(() => {
+          holdInterval = setInterval(step, 80); // défilement rapide après 400ms
+        }, 400);
+      }
+
+      function stopHold() {
+        clearTimeout(holdTimer);
+        clearInterval(holdInterval);
+        holdTimer = null;
+        holdInterval = null;
+      }
+
+      btn.addEventListener('mousedown',  (e) => { e.stopPropagation(); startHold(); });
+      btn.addEventListener('touchstart', (e) => { e.stopPropagation(); e.preventDefault(); startHold(); }, { passive: false });
+      btn.addEventListener('mouseup',    stopHold);
+      btn.addEventListener('mouseleave', stopHold);
+      btn.addEventListener('touchend',   stopHold);
+      btn.addEventListener('touchcancel',stopHold);
+      // Empêcher le click de re-déclencher step() après mousedown
+      btn.addEventListener('click', (e) => e.stopPropagation());
     });
 
     // Validation champs

@@ -93,7 +93,7 @@ def assemble_reencode(input_files: list, output_path: str, crf: int = DEFAULT_CR
 
 
 def assemble_auto(input_files: list, output_path: str, crf: int = DEFAULT_CRF):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TEMP_DIR, exist_ok=True)
     if check_compatibility(input_files):
         assemble_concat(input_files, output_path)
     else:
