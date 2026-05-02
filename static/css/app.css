@@ -805,6 +805,27 @@ body {
 .crf-label-left, .crf-label-right { font-size: var(--text-xs); color: var(--color-text-muted); white-space: nowrap; }
 .crf-value { font-weight: 700; color: var(--color-accent); font-size: var(--text-sm); margin-left: 8px; }
 
+/* Vercel warning */
+.vercel-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: rgba(245,158,11,0.08);
+  border: 1px solid rgba(245,158,11,0.3);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+.vercel-warning svg    { width: 20px; height: 20px; color: var(--color-warning); flex-shrink: 0; margin-top: 2px; }
+.vercel-warning strong { font-size: var(--text-sm); font-weight: 600; color: var(--color-warning); display: block; margin-bottom: 4px; }
+.vercel-warning p      { font-size: var(--text-xs); color: var(--color-text-secondary); }
+
+.assemble-upload-zone.vercel-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* Compat warning */
 .compat-warning {
   display: flex; align-items: center; gap: 10px;

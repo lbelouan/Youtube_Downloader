@@ -39,10 +39,12 @@ def check_dependencies():
     return missing
 
 
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+
 @app.route("/")
 def index():
     missing = check_dependencies()
-    return render_template("index.html", missing_deps=missing)
+    return render_template("index.html", missing_deps=missing, is_vercel=IS_VERCEL)
 
 
 # ── Info vidéo ──────────────────────────────────────────────

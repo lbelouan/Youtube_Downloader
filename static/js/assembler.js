@@ -71,7 +71,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Upload zone ──────────────────────────────────────────
-  uploadZone.addEventListener('click', () => fileInput.click());
+  if (window.IS_VERCEL) {
+    uploadZone.title = 'Indisponible sur Vercel — utilisez l\'app en local';
+  }
+
+  uploadZone.addEventListener('click', () => {
+    if (window.IS_VERCEL) return;
+    fileInput.click();
+  });
 
   uploadZone.addEventListener('dragover', (e) => {
     e.preventDefault();
