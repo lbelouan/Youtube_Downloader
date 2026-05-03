@@ -21,6 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const logConsole     = document.getElementById('dlLog');
   const btnCancelDl    = document.getElementById('btnCancelDownload');
   const btnGoDownload  = document.getElementById('btnGoDownload');
+  const btnResetDl     = document.getElementById('btnResetDownload');
+  const previewActions = document.getElementById('previewActions');
 
   let videoDuration = null;
   let videoInfo     = null;
@@ -241,8 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
     previewBlock.style.display = 'block';
 
     // Bouton "Découper" → ouvre le tab Découper avec l'URL pré-chargée
-    const previewActions = document.getElementById('previewActions');
-    const btnCutFromYt   = document.getElementById('btnCutFromYt');
+    const btnCutFromYt = document.getElementById('btnCutFromYt');
     if (previewActions && btnCutFromYt) {
       previewActions.style.display = 'flex';
       btnCutFromYt.onclick = () => {
@@ -251,6 +252,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
     }
+
+    // Afficher le bouton reset
+    if (btnResetDl) btnResetDl.style.display = 'inline-flex';
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
   }
@@ -387,5 +391,69 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnGoDownload) {
     btnGoDownload.addEventListener('click', () => window.switchTab('download'));
+  }
+
+  // ── Reset téléchargement ─────────────────────────────────
+  function resetDownloadTab() {
+    // Annuler un téléchargement en cours
+    if (_dlSse) { _dlSse.close(); _dlSse = null; }
+    if (_dlTaskId) {
+      postJSON(`/queue/cancel/${_dlTaskId}`, {}).catch(() => {});
+      _dlTaskId = null;
+    }
+
+    // Réinitialiser le formulaire
+    urlInput.value = '';
+    fileNameInput.value = '';
+    showUrlError('');
+    showTcError('');
+
+    // Réinitialiser les timecodes
+    ['Start', 'End'].forEach(prefix => {
+      const hInput = document.getElementById(`tc${prefix}H`);
+      const mInput = document.getElementById(`tc${prefix}M`);
+      const sInput = document.getElementById(`tc${prefix}S`);
+      const hidden = document.getElementById(`tc${prefix}`);
+      const textEl = document.getElementById(`tc${prefix}Text`);
+      const display = document.getElementById(`tc${prefix}Display`);
+      if (hInput) hInput.value = 0;
+      if (mInput) mInput.value = 0;
+      if (sInput) sInput.value = 0;
+      if (hidden) hidden.value = '';
+      if (textEl) textEl.textContent = prefix === 'Start' ? 'Début de la vidéo' : 'Fin de la vidéo';
+      if (display) { display.classList.add('empty'); display.classList.remove('has-value', 'open'); }
+      document.querySelectorAll('.tc-popover.open').forEach(p => p.classList.remove('open'));
+    });
+
+    // Réinitialiser le format sur MP4
+    selectedFormat = 'mp4';
+    fmtMp4.classList.add('active');
+    fmtMp3.classList.remove('active');
+    mp3QualityGrp.style.display = 'none';
+    cutModeGrp.style.display    = 'block';
+
+    // Cacher le preview et previewActions
+    previewBlock.style.display = 'none';
+    if (previewActions) previewActions.style.display = 'none';
+    videoDuration = null;
+    videoInfo     = null;
+
+    // Réinitialiser la section progression
+    progressSec.style.display = 'none';
+    progressFill.style.width  = '0%';
+    progressFill.classList.remove('running');
+    progressPct.textContent   = '0%';
+    logConsole.innerHTML      = '';
+    btnDownload.disabled      = false;
+
+    // Cacher le bouton reset
+    if (btnResetDl) btnResetDl.style.display = 'none';
+
+    urlInput.focus();
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  if (btnResetDl) {
+    btnResetDl.addEventListener('click', resetDownloadTab);
   }
 });

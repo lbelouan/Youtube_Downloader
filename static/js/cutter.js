@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const progressLbl     = document.getElementById('cutterProgressLabel');
   const btnCancel       = document.getElementById('btnCancelCut');
   const pathError       = document.getElementById('cutterPathError');
+  const btnResetCutter  = document.getElementById('btnResetCutter');
 
   // ── État ─────────────────────────────────────────────────
   let videoPath    = null;
@@ -194,6 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
       resetExportUI(false);
 
       playerSection.style.display = 'block';
+      if (btnResetCutter) btnResetCutter.style.display = 'inline-flex';
       setTimeout(resizeCanvas, 100);
 
     } catch (e) {
@@ -609,6 +611,54 @@ document.addEventListener('DOMContentLoaded', () => {
     progressFill.classList.remove('running');
     if (reenable) btnExport.disabled = false;
     _jobId = null; _pollTimer = null; _cancelled = false;
+  }
+
+  // ── Reset découpe ────────────────────────────────────────
+  function resetCutterTab() {
+    // Annuler un job en cours
+    if (_jobId) {
+      clearInterval(_pollTimer);
+      fetch(`/api/cut/cancel/${_jobId}`, { method: 'POST' }).catch(() => {});
+    }
+
+    // Arrêter la vidéo
+    videoEl.pause();
+    videoEl.src = '';
+
+    // Réinitialiser l'état
+    videoPath = null;
+    duration  = 0;
+    inTime    = outTime = null;
+    segments  = [];
+    speedIdx  = 2;
+    videoEl.playbackRate = speeds[speedIdx];
+    _jobId = null; _pollTimer = null; _cancelled = false;
+
+    // Réinitialiser le formulaire source
+    pathInput.value = '';
+    pathError.textContent = '';
+    pathError.classList.remove('visible');
+
+    // Masquer le player
+    playerSection.style.display = 'none';
+
+    // Remettre à zéro l'UI de découpe
+    renderInOut();
+    renderSegments();
+    resetExportUI(true);
+
+    // Vider le canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Cacher le bouton reset
+    if (btnResetCutter) btnResetCutter.style.display = 'none';
+
+    pathInput.focus();
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  if (btnResetCutter) {
+    btnResetCutter.addEventListener('click', resetCutterTab);
   }
 
   // ── Intégration : remplir le path depuis un autre onglet ─
