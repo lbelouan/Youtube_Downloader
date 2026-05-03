@@ -91,12 +91,17 @@ def cut_segments_batch(
     out_dir = os.path.join(TEMP_DIR, f"cut_{int(time.time() * 1000)}")
     os.makedirs(out_dir, exist_ok=True)
 
-    overlay_filter = build_overlay_filter(overlays or [])
-    # Un overlay nécessite un réencodage (stream copy incompatible avec -vf)
-    force_encode   = bool(overlay_filter)
+    # Déterminer si un réencodage est nécessaire pour au moins un segment
+    # (overlay par segment ou mode precise)
+    def _seg_filter(seg):
+        seg_ovs = seg.get("overlays") or overlays or []
+        return build_overlay_filter(seg_ovs)
+
+    any_filter   = any(_seg_filter(s) for s in segments)
+    need_encode  = mode == "precise" or any_filter
 
     w, h = 1920, 1080
-    if mode == "precise" or force_encode:
+    if need_encode:
         w, h = _probe_video(input_path)
 
     total        = len(segments)
@@ -110,7 +115,10 @@ def cut_segments_batch(
             filename += ".mp4"
         out_path = os.path.join(out_dir, filename)
 
-        if mode == "fast" and not force_encode:
+        overlay_filter = _seg_filter(seg)
+        seg_encode     = bool(overlay_filter) or (mode == "precise")
+
+        if mode == "fast" and not seg_encode:
             cmd = [
                 "ffmpeg",
                 "-ss", str(start), "-to", str(end),
@@ -122,7 +130,7 @@ def cut_segments_batch(
         else:
             enc_args  = video_encode_args(crf, w, h)
             # Pas de hwdecode si overlay (drawtext travaille en espace CPU)
-            hw_decode = [] if force_encode else hwdecode_args()
+            hw_decode = [] if overlay_filter else hwdecode_args()
             vf_args   = ["-vf", overlay_filter] if overlay_filter else []
             cmd = [
                 "ffmpeg", *hw_decode,

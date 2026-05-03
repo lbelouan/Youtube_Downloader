@@ -366,18 +366,49 @@ document.addEventListener('DOMContentLoaded', () => {
       const el  = document.createElement('div');
       el.className = 'cut-segment-item';
       el.innerHTML = `
-        <span class="seg-idx">${i + 1}</span>
-        <div class="seg-info">
-          <span class="seg-times">${fmtTc(seg.start)} → ${fmtTc(seg.end)}</span>
-          <span class="seg-dur">${fmtDur(dur)}</span>
+        <div class="seg-main">
+          <span class="seg-idx">${i + 1}</span>
+          <div class="seg-info">
+            <span class="seg-times">${fmtTc(seg.start)} → ${fmtTc(seg.end)}</span>
+            <span class="seg-dur">${fmtDur(dur)}</span>
+          </div>
+          <div class="seg-actions">
+            <button class="btn-seg-goto" title="Aller au début du segment">
+              <i data-lucide="corner-down-right"></i>
+            </button>
+            <button class="btn-seg-remove" title="Supprimer">✕</button>
+          </div>
         </div>
-        <div class="seg-actions">
-          <button class="btn-seg-goto" title="Aller au début du segment">
-            <i data-lucide="corner-down-right"></i>
-          </button>
-          <button class="btn-seg-remove" title="Supprimer">✕</button>
+        <div class="seg-overlays">
+          <div class="seg-ov-field">
+            <span class="seg-ov-label">
+              <i data-lucide="align-center"></i> Bas centré
+            </span>
+            <input type="text" class="seg-ov-input" data-pos="bottom_center"
+                   placeholder="texte bas (ex : DINOS)" maxlength="60"
+                   autocomplete="off" spellcheck="false"
+                   value="${escHtml(seg.ovBot || '')}">
+          </div>
+          <div class="seg-ov-field">
+            <span class="seg-ov-label">
+              <i data-lucide="align-left"></i> Haut gauche
+            </span>
+            <input type="text" class="seg-ov-input" data-pos="top_left"
+                   placeholder="texte haut (ex : 31.05.18)" maxlength="60"
+                   autocomplete="off" spellcheck="false"
+                   value="${escHtml(seg.ovTop || '')}">
+          </div>
         </div>
       `;
+      // Persister les valeurs overlay dans le segment au fil de la frappe
+      el.querySelectorAll('.seg-ov-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+          if (inp.dataset.pos === 'bottom_center') seg.ovBot = inp.value;
+          else                                      seg.ovTop = inp.value;
+        });
+        // Éviter que les raccourcis clavier du player s'activent pendant la saisie
+        inp.addEventListener('keydown', e => e.stopPropagation());
+      });
       el.querySelector('.btn-seg-goto').addEventListener('click', () => {
         videoEl.currentTime = seg.start;
         videoEl.play();
@@ -520,19 +551,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const mode = document.querySelector('#cutterExportSection input[name="cutMode"]:checked')?.value || 'fast';
 
-    const overlays = [
-      {
-        position: 'bottom_center',
-        enabled:  document.getElementById('cutOvBotEnabled')?.checked || false,
-        text:     document.getElementById('cutOvBotText')?.value.trim() || '',
-      },
-      {
-        position: 'top_left',
-        enabled:  document.getElementById('cutOvTopEnabled')?.checked || false,
-        text:     document.getElementById('cutOvTopText')?.value.trim() || '',
-      },
-    ];
-
     _cancelled = false;
     btnExport.disabled = true;
     progressSec.style.display = 'block';
@@ -543,16 +561,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       // Nommer les segments
-      const segsData = segments.map((seg, i) => ({
-        start:    seg.start,
-        end:      seg.end,
-        filename: `segment_${String(i + 1).padStart(3, '0')}.mp4`,
-      }));
+      const segsData = segments.map((seg, i) => {
+        const botText = (seg.ovBot || '').trim();
+        const topText = (seg.ovTop || '').trim();
+        return {
+          start:    seg.start,
+          end:      seg.end,
+          filename: `segment_${String(i + 1).padStart(3, '0')}.mp4`,
+          overlays: [
+            { position: 'bottom_center', enabled: !!botText, text: botText },
+            { position: 'top_left',      enabled: !!topText, text: topText },
+          ],
+        };
+      });
 
       const startRes  = await fetch('/api/cut/start', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ input: videoPath, segments: segsData, mode, overlays }),
+        body:    JSON.stringify({ input: videoPath, segments: segsData, mode }),
       });
       const startData = await startRes.json();
       if (startData.error) throw new Error(startData.error);
@@ -654,14 +680,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Masquer le player
     playerSection.style.display = 'none';
-
-    // Réinitialiser les overlays
-    ['cutOvBotEnabled','cutOvTopEnabled'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.checked = false;
-    });
-    ['cutOvBotText','cutOvTopText'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.value = '';
-    });
 
     // Remettre à zéro l'UI de découpe
     renderInOut();
