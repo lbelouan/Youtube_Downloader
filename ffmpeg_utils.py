@@ -150,10 +150,10 @@ def build_overlay_filter(overlays: list) -> str:
     font_part = f":fontfile='{font_path}'" if font_path else ""
 
     POS = {
-        "bottom_center": {"x": "(w-text_w)/2", "y": "h-text_h-40", "size": 60},
-        "top_left":      {"x": "25",            "y": "25",          "size": 40},
-        "top_right":     {"x": "w-text_w-25",   "y": "25",          "size": 40},
-        "bottom_left":   {"x": "25",            "y": "h-text_h-40", "size": 60},
+        "bottom_center": {"x": "(w-text_w)/2", "y": "h-text_h-90", "size": 80},
+        "top_left":      {"x": "55",            "y": "50",          "size": 55},
+        "top_right":     {"x": "w-text_w-55",   "y": "50",          "size": 55},
+        "bottom_left":   {"x": "55",            "y": "h-text_h-90", "size": 80},
     }
 
     parts = []
@@ -190,10 +190,10 @@ def make_overlay_png(overlays: list, width: int, height: int, out_path: str) -> 
     draw = ImageDraw.Draw(img)
 
     POS_CFG = {
-        "bottom_center": (60, lambda tw, th: ((width - tw) // 2, height - th - 40)),
-        "top_left":      (40, lambda tw, th: (25, 25)),
-        "top_right":     (40, lambda tw, th: (width - tw - 25, 25)),
-        "bottom_left":   (60, lambda tw, th: (25, height - th - 40)),
+        "bottom_center": (80, lambda tw, th: ((width - tw) // 2, height - th - 90)),
+        "top_left":      (55, lambda tw, th: (55, 50)),
+        "top_right":     (55, lambda tw, th: (width - tw - 55, 50)),
+        "bottom_left":   (80, lambda tw, th: (55, height - th - 90)),
     }
 
     font_path = _find_font()
