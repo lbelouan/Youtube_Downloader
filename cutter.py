@@ -13,7 +13,7 @@ import json
 import time
 import zipfile
 from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_AUDIO_BITRATE, YTDLP_FORMAT, YTDLP_MERGE_FORMAT
-from ffmpeg_utils import video_encode_args, hwdecode_args
+from ffmpeg_utils import video_encode_args, hwdecode_args, build_overlay_filter
 
 
 def _subprocess_env() -> dict:
@@ -72,6 +72,7 @@ def cut_segments_batch(
     crf: int = DEFAULT_CRF,
     on_progress=None,
     proc_holder: dict = None,
+    overlays: list = None,
 ) -> list[str]:
     """
     Découpe une liste de segments depuis input_path.
@@ -90,8 +91,12 @@ def cut_segments_batch(
     out_dir = os.path.join(TEMP_DIR, f"cut_{int(time.time() * 1000)}")
     os.makedirs(out_dir, exist_ok=True)
 
+    overlay_filter = build_overlay_filter(overlays or [])
+    # Un overlay nécessite un réencodage (stream copy incompatible avec -vf)
+    force_encode   = bool(overlay_filter)
+
     w, h = 1920, 1080
-    if mode == "precise":
+    if mode == "precise" or force_encode:
         w, h = _probe_video(input_path)
 
     total        = len(segments)
@@ -105,7 +110,7 @@ def cut_segments_batch(
             filename += ".mp4"
         out_path = os.path.join(out_dir, filename)
 
-        if mode == "fast":
+        if mode == "fast" and not force_encode:
             cmd = [
                 "ffmpeg",
                 "-ss", str(start), "-to", str(end),
@@ -116,11 +121,14 @@ def cut_segments_batch(
             ]
         else:
             enc_args  = video_encode_args(crf, w, h)
-            hw_decode = hwdecode_args()
+            # Pas de hwdecode si overlay (drawtext travaille en espace CPU)
+            hw_decode = [] if force_encode else hwdecode_args()
+            vf_args   = ["-vf", overlay_filter] if overlay_filter else []
             cmd = [
                 "ffmpeg", *hw_decode,
                 "-ss", str(start), "-to", str(end),
                 "-i", input_path,
+                *vf_args,
                 *enc_args,
                 "-c:a", "aac", "-b:a", DEFAULT_AUDIO_BITRATE,
                 "-movflags", "+faststart",

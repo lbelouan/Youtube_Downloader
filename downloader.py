@@ -2,7 +2,7 @@ import subprocess
 import os
 import json
 from config import YTDLP_FORMAT, YTDLP_MERGE_FORMAT, TEMP_DIR
-from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdecode_args
+from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdecode_args, build_overlay_filter
 
 
 def _subprocess_env() -> dict:
@@ -151,22 +151,30 @@ def download_best_mp3(url: str, output_path: str,
 # ── Découpe vidéo ─────────────────────────────────────────────
 
 def cut_segment(input_path: str, start: str, end: str,
-                output_path: str, precise: bool = False):
+                output_path: str, precise: bool = False,
+                overlays: list = None):
     """
     Découpe un segment vidéo.
     - precise=False : stream copy (instantané, sans perte qualité, pas frame-accurate)
     - precise=True  : réencodage frame-accurate via VideoToolbox (GPU) ou libx264
+    - overlays      : liste de textes incrustés (force le réencodage si non vide)
     """
-    if precise:
+    overlay_filter = build_overlay_filter(overlays or [])
+    force_encode   = bool(overlay_filter) or precise
+
+    if force_encode:
         w, h        = _probe_video(input_path)
-        enc_args    = video_encode_args(18, w, h)   # CRF 18 = haute qualité
-        codec_args  = [*enc_args, "-c:a", "aac", "-b:a", "256k"]
-        hw_decode   = hwdecode_args()
+        enc_args    = video_encode_args(18, w, h)
+        # Pas de hwdecode si overlay (drawtext travaille en espace CPU)
+        hw_decode   = [] if overlay_filter else hwdecode_args()
+        vf_args     = ["-vf", overlay_filter] if overlay_filter else []
         cmd = [
             "ffmpeg", *hw_decode,
             "-ss", start, "-to", end,
             "-i", input_path,
-            *codec_args,
+            *vf_args,
+            *enc_args,
+            "-c:a", "aac", "-b:a", "256k",
             "-movflags", "+faststart",
             output_path, "-y",
         ]
@@ -186,6 +194,37 @@ def cut_segment(input_path: str, start: str, end: str,
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")
         raise RuntimeError(f"FFmpeg cut failed (code {result.returncode}):\n{stderr[-1000:]}")
+
+
+def apply_overlay(input_path: str, output_path: str, overlays: list):
+    """
+    Applique des textes incrustés sur une vidéo complète (sans découpe).
+    Utilise VideoToolbox (GPU) ou libx264 en fallback.
+    """
+    overlay_filter = build_overlay_filter(overlays or [])
+    if not overlay_filter:
+        # Rien à faire : copie directe
+        import shutil as _sh
+        _sh.copy2(input_path, output_path)
+        return
+
+    w, h     = _probe_video(input_path)
+    enc_args = video_encode_args(18, w, h)
+    cmd = [
+        "ffmpeg",
+        "-i", input_path,
+        "-vf", overlay_filter,
+        *enc_args,
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        output_path, "-y",
+    ]
+    result = subprocess.run(
+        cmd, check=False, capture_output=True, env=_subprocess_env()
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")
+        raise RuntimeError(f"FFmpeg overlay failed (code {result.returncode}):\n{stderr[-1000:]}")
 
 
 # ── Découpe audio MP3 ─────────────────────────────────────────

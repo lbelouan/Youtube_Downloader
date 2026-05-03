@@ -518,7 +518,20 @@ document.addEventListener('DOMContentLoaded', () => {
   async function startExport() {
     if (segments.length === 0) return;
 
-    const mode = document.querySelector('input[name="cutMode"]:checked')?.value || 'fast';
+    const mode = document.querySelector('#cutterExportSection input[name="cutMode"]:checked')?.value || 'fast';
+
+    const overlays = [
+      {
+        position: 'bottom_center',
+        enabled:  document.getElementById('cutOvBotEnabled')?.checked || false,
+        text:     document.getElementById('cutOvBotText')?.value.trim() || '',
+      },
+      {
+        position: 'top_left',
+        enabled:  document.getElementById('cutOvTopEnabled')?.checked || false,
+        text:     document.getElementById('cutOvTopText')?.value.trim() || '',
+      },
+    ];
 
     _cancelled = false;
     btnExport.disabled = true;
@@ -539,7 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const startRes  = await fetch('/api/cut/start', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ input: videoPath, segments: segsData, mode }),
+        body:    JSON.stringify({ input: videoPath, segments: segsData, mode, overlays }),
       });
       const startData = await startRes.json();
       if (startData.error) throw new Error(startData.error);
@@ -641,6 +654,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Masquer le player
     playerSection.style.display = 'none';
+
+    // Réinitialiser les overlays
+    ['cutOvBotEnabled','cutOvTopEnabled'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.checked = false;
+    });
+    ['cutOvBotText','cutOvTopText'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
 
     // Remettre à zéro l'UI de découpe
     renderInOut();

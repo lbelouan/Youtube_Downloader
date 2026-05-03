@@ -386,6 +386,7 @@ def cut_start():
     segments = data["segments"]
     mode     = data.get("mode", "fast")
     crf      = int(data.get("crf", 18))
+    overlays = data.get("overlays") or []
     job_id   = f"cut_{int(time.time() * 1000)}"
 
     proc_holder = {}
@@ -428,7 +429,8 @@ def cut_start():
                     _cut_jobs[job_id]["progress"] = pct
 
             from cutter import cut_segments_batch, make_zip
-            files = cut_segments_batch(local_path, segments, mode, crf, on_cut, proc_holder)
+            files = cut_segments_batch(local_path, segments, mode, crf, on_cut, proc_holder,
+                                       overlays=overlays)
 
             if len(files) == 1:
                 _cut_jobs[job_id]["output_files"] = files

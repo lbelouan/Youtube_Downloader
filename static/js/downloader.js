@@ -266,19 +266,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ── Construction de la tâche ─────────────────────────────
+  function buildOverlays() {
+    return [
+      {
+        position: 'bottom_center',
+        enabled:  document.getElementById('dlOvBotEnabled')?.checked || false,
+        text:     document.getElementById('dlOvBotText')?.value.trim() || '',
+      },
+      {
+        position: 'top_left',
+        enabled:  document.getElementById('dlOvTopEnabled')?.checked || false,
+        text:     document.getElementById('dlOvTopText')?.value.trim() || '',
+      },
+    ];
+  }
+
   function buildTask() {
     const url      = urlInput.value.trim();
     const start    = startPicker.getValue();
     const end      = endPicker.getValue();
     const filename = fileNameInput.value.trim() || 'extrait';
-    const precise  = document.querySelector('input[name="cutMode"]:checked')?.value === 'precise';
+    const precise  = document.querySelector('#cutModeGroup input[name="cutMode"]:checked')?.value === 'precise';
     const bitrate  = document.querySelector('input[name="mp3Bitrate"]:checked')?.value || '320k';
+    const overlays = buildOverlays();
 
     if (!url) { showUrlError('URL requise'); return null; }
     if ((start || end) && !validateTimecodes()) return null;
 
     return { url, start, end, filename, precise, format: selectedFormat,
-             bitrate, title: videoInfo?.title || url };
+             bitrate, overlays, title: videoInfo?.title || url };
   }
 
   // ── Ajouter à la file ────────────────────────────────────
@@ -431,6 +447,14 @@ document.addEventListener('DOMContentLoaded', () => {
     fmtMp3.classList.remove('active');
     mp3QualityGrp.style.display = 'none';
     cutModeGrp.style.display    = 'block';
+
+    // Réinitialiser les overlays
+    ['dlOvBotEnabled','dlOvTopEnabled'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.checked = false;
+    });
+    ['dlOvBotText','dlOvTopText'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
 
     // Cacher le preview et previewActions
     previewBlock.style.display = 'none';

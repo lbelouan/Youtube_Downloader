@@ -115,6 +115,9 @@ class QueueManager:
         os.makedirs(TEMP_DIR, exist_ok=True)
         fmt       = task.get("format", "mp4")   # "mp4" ou "mp3"
         bitrate   = task.get("bitrate", "320k")
+        overlays  = task.get("overlays") or []
+        has_overlay = fmt != "mp3" and any(o.get("enabled") and o.get("text", "").strip()
+                                           for o in overlays)
         safe_id   = task["id"].replace(":", "_").replace(".", "_")
         safe_name = os.path.basename(task.get("filename") or "extrait")
         ext       = "mp3" if fmt == "mp3" else "mp4"
@@ -123,7 +126,7 @@ class QueueManager:
 
         try:
             from downloader import (download_best_quality, download_best_mp3,
-                                    cut_segment, cut_audio_mp3)
+                                    cut_segment, cut_audio_mp3, apply_overlay)
 
             def on_progress(pct):
                 with self.lock:
@@ -141,13 +144,15 @@ class QueueManager:
 
             _sp.Popen = patched_popen
             no_cut = not task.get("start") and not task.get("end")
+            # On télécharge toujours vers temp_raw si un post-traitement est nécessaire
+            needs_process = not no_cut or has_overlay
             try:
                 if fmt == "mp3":
                     dest = final_path if no_cut else temp_raw
                     download_best_mp3(task["url"], dest,
                                       bitrate=bitrate, progress_callback=on_progress)
                 else:
-                    dest = final_path if no_cut else temp_raw
+                    dest = final_path if not needs_process else temp_raw
                     download_best_quality(task["url"], dest, progress_callback=on_progress)
             finally:
                 _sp.Popen = orig_popen
@@ -164,7 +169,11 @@ class QueueManager:
                     cut_audio_mp3(temp_raw, start, end, final_path, bitrate=bitrate)
                 else:
                     cut_segment(temp_raw, start, end, final_path,
-                                precise=task.get("precise", False))
+                                precise=task.get("precise", False),
+                                overlays=overlays)
+            elif has_overlay:
+                # Pas de découpe mais overlay demandé : passe FFmpeg dédiée
+                apply_overlay(temp_raw, final_path, overlays)
 
             with self.lock:
                 task["status"]   = "done"

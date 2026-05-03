@@ -89,6 +89,77 @@ def hwdecode_args() -> list[str]:
     return []
 
 
+def _find_font() -> str | None:
+    """
+    Trouve un fichier de police système utilisable par FFmpeg drawtext.
+    Retourne le chemin absolu ou None si aucune police trouvée.
+    """
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/Library/Fonts/Arial.ttf",
+        # Linux fallbacks
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]
+    for f in candidates:
+        if os.path.exists(f):
+            return f
+    return None
+
+
+def build_overlay_filter(overlays: list) -> str:
+    """
+    Construit une chaîne de filtre FFmpeg drawtext pour les textes incrustés.
+
+    overlays = [
+        {"text": "DINOS",    "position": "bottom_center", "enabled": True},
+        {"text": "31.05.18", "position": "top_left",      "enabled": True},
+    ]
+
+    Positions supportées : bottom_center, top_left, top_right, bottom_left
+    Retourne "" si aucun overlay activé.
+    """
+    if not overlays:
+        return ""
+
+    font_path = _find_font()
+    font_part = f":fontfile='{font_path}'" if font_path else ""
+
+    POS = {
+        "bottom_center": {"x": "(w-text_w)/2", "y": "h-text_h-40", "size": 60},
+        "top_left":      {"x": "25",            "y": "25",          "size": 40},
+        "top_right":     {"x": "w-text_w-25",   "y": "25",          "size": 40},
+        "bottom_left":   {"x": "25",            "y": "h-text_h-40", "size": 60},
+    }
+
+    parts = []
+    for ov in overlays:
+        if not ov.get("enabled"):
+            continue
+        raw_text = str(ov.get("text") or "").strip()
+        if not raw_text:
+            continue
+
+        # Majuscules + échappement pour le parseur FFmpeg drawtext
+        text = raw_text.upper()
+        text = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+
+        pos  = POS.get(ov.get("position", "bottom_center"), POS["bottom_center"])
+        size = int(ov.get("size", pos["size"]))
+        alpha = float(ov.get("alpha", 0.30))
+        color = f"white@{alpha:.2f}"
+
+        parts.append(
+            f"drawtext=text='{text}'{font_part}"
+            f":x={pos['x']}:y={pos['y']}"
+            f":fontsize={size}:fontcolor={color}"
+        )
+
+    return ",".join(parts)
+
+
 def video_encode_args(crf: int, width: int = 1920, height: int = 1080) -> list[str]:
     """
     Retourne les arguments FFmpeg d'encodage vidéo optimaux :
