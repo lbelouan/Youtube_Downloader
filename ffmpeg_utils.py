@@ -109,19 +109,41 @@ def _find_font() -> str | None:
     return None
 
 
+_DRAWTEXT_CACHE: bool | None = None
+
+
+def has_drawtext() -> bool:
+    """
+    Retourne True si FFmpeg a été compilé avec libfreetype (filtre drawtext disponible).
+    Résultat mis en cache après le premier appel.
+    """
+    global _DRAWTEXT_CACHE
+    if _DRAWTEXT_CACHE is not None:
+        return _DRAWTEXT_CACHE
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"],
+            capture_output=True, text=True, timeout=5, env=_base_env()
+        )
+        _DRAWTEXT_CACHE = " drawtext " in r.stdout
+    except Exception:
+        _DRAWTEXT_CACHE = False
+    return _DRAWTEXT_CACHE
+
+
+def _has_active_overlays(overlays: list) -> bool:
+    return any(
+        o.get("enabled") and str(o.get("text") or "").strip()
+        for o in (overlays or [])
+    )
+
+
 def build_overlay_filter(overlays: list) -> str:
     """
-    Construit une chaîne de filtre FFmpeg drawtext pour les textes incrustés.
-
-    overlays = [
-        {"text": "DINOS",    "position": "bottom_center", "enabled": True},
-        {"text": "31.05.18", "position": "top_left",      "enabled": True},
-    ]
-
-    Positions supportées : bottom_center, top_left, top_right, bottom_left
-    Retourne "" si aucun overlay activé.
+    Construit une chaîne drawtext pour -vf (nécessite libfreetype dans FFmpeg).
+    Retourne "" si aucun overlay activé ou drawtext indisponible.
     """
-    if not overlays:
+    if not overlays or not has_drawtext():
         return ""
 
     font_path = _find_font()
@@ -141,23 +163,104 @@ def build_overlay_filter(overlays: list) -> str:
         raw_text = str(ov.get("text") or "").strip()
         if not raw_text:
             continue
-
-        # Majuscules + échappement pour le parseur FFmpeg drawtext
-        text = raw_text.upper()
-        text = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
-
-        pos  = POS.get(ov.get("position", "bottom_center"), POS["bottom_center"])
-        size = int(ov.get("size", pos["size"]))
+        text  = raw_text.upper().replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+        pos   = POS.get(ov.get("position", "bottom_center"), POS["bottom_center"])
+        size  = int(ov.get("size", pos["size"]))
         alpha = float(ov.get("alpha", 0.30))
-        color = f"white@{alpha:.2f}"
-
         parts.append(
             f"drawtext=text='{text}'{font_part}"
             f":x={pos['x']}:y={pos['y']}"
-            f":fontsize={size}:fontcolor={color}"
+            f":fontsize={size}:fontcolor=white@{alpha:.2f}"
+        )
+    return ",".join(parts)
+
+
+def make_overlay_png(overlays: list, width: int, height: int, out_path: str) -> bool:
+    """
+    Génère un PNG transparent RGBA avec les textes overlay via Pillow.
+    Fallback quand drawtext n'est pas disponible dans FFmpeg.
+    Retourne True si réussi, False si Pillow absent.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+
+    img  = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    POS_CFG = {
+        "bottom_center": (60, lambda tw, th: ((width - tw) // 2, height - th - 40)),
+        "top_left":      (40, lambda tw, th: (25, 25)),
+        "top_right":     (40, lambda tw, th: (width - tw - 25, 25)),
+        "bottom_left":   (60, lambda tw, th: (25, height - th - 40)),
+    }
+
+    font_path = _find_font()
+
+    for ov in overlays:
+        if not ov.get("enabled"):
+            continue
+        text = str(ov.get("text") or "").strip().upper()
+        if not text:
+            continue
+
+        alpha   = int(float(ov.get("alpha", 0.30)) * 255)
+        pos_key = ov.get("position", "bottom_center")
+        base_sz, pos_fn = POS_CFG.get(pos_key, POS_CFG["bottom_center"])
+        font_size = max(12, int(height * base_sz / 1080))
+
+        font = None
+        if font_path:
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+            except Exception:
+                pass
+        if font is None:
+            font = ImageFont.load_default()
+
+        bbox   = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        x, y   = pos_fn(tw, th)
+        draw.text((x, y), text, font=font, fill=(255, 255, 255, alpha))
+
+    img.save(out_path, "PNG")
+    return True
+
+
+def overlay_args(overlays: list, width: int, height: int,
+                 tmp_dir: str) -> tuple[list, list, str | None]:
+    """
+    Retourne (extra_inputs, filter_args, tmp_png_or_None) à injecter dans une
+    commande FFmpeg pour appliquer les textes incrustés.
+
+    Stratégie automatique :
+      1. drawtext (-vf)   → si FFmpeg a libfreetype
+      2. PNG + overlay    → si Pillow est installé (fallback)
+      3. Rien             → si ni l'un ni l'autre (overlay ignoré silencieusement)
+
+    L'appelant est responsable de supprimer tmp_png après l'encodage.
+    """
+    if not _has_active_overlays(overlays):
+        return [], [], None
+
+    # Stratégie 1 : drawtext (FFmpeg natif)
+    vf = build_overlay_filter(overlays)
+    if vf:
+        return [], ["-vf", vf], None
+
+    # Stratégie 2 : Pillow → PNG transparent + filtre overlay
+    import time as _time
+    os.makedirs(tmp_dir, exist_ok=True)
+    png_path = os.path.join(tmp_dir, f"ov_{int(_time.time() * 1000)}.png")
+    if make_overlay_png(overlays, width, height, png_path):
+        return (
+            ["-i", png_path],
+            ["-filter_complex", "[0:v][1:v]overlay=0:0:format=yuv420"],
+            png_path,
         )
 
-    return ",".join(parts)
+    return [], [], None
 
 
 def video_encode_args(crf: int, width: int = 1920, height: int = 1080) -> list[str]:

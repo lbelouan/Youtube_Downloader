@@ -13,7 +13,7 @@ import json
 import time
 import zipfile
 from config import TEMP_DIR, DEFAULT_CRF, DEFAULT_AUDIO_BITRATE, YTDLP_FORMAT, YTDLP_MERGE_FORMAT
-from ffmpeg_utils import video_encode_args, hwdecode_args, build_overlay_filter
+from ffmpeg_utils import video_encode_args, hwdecode_args, overlay_args, _has_active_overlays
 
 
 def _subprocess_env() -> dict:
@@ -91,14 +91,12 @@ def cut_segments_batch(
     out_dir = os.path.join(TEMP_DIR, f"cut_{int(time.time() * 1000)}")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Déterminer si un réencodage est nécessaire pour au moins un segment
-    # (overlay par segment ou mode precise)
-    def _seg_filter(seg):
-        seg_ovs = seg.get("overlays") or overlays or []
-        return build_overlay_filter(seg_ovs)
+    # Déterminer si un réencodage est nécessaire (overlay ou mode precise)
+    def _seg_ovs(seg):
+        return seg.get("overlays") or overlays or []
 
-    any_filter   = any(_seg_filter(s) for s in segments)
-    need_encode  = mode == "precise" or any_filter
+    any_overlay  = any(_has_active_overlays(_seg_ovs(s)) for s in segments)
+    need_encode  = mode == "precise" or any_overlay
 
     w, h = 1920, 1080
     if need_encode:
@@ -115,9 +113,11 @@ def cut_segments_batch(
             filename += ".mp4"
         out_path = os.path.join(out_dir, filename)
 
-        overlay_filter = _seg_filter(seg)
-        seg_encode     = bool(overlay_filter) or (mode == "precise")
+        seg_ovs    = _seg_ovs(seg)
+        has_ov     = _has_active_overlays(seg_ovs)
+        seg_encode = has_ov or (mode == "precise")
 
+        tmp_png = None
         if mode == "fast" and not seg_encode:
             cmd = [
                 "ffmpeg",
@@ -128,15 +128,16 @@ def cut_segments_batch(
                 out_path, "-y",
             ]
         else:
-            enc_args  = video_encode_args(crf, w, h)
-            # Pas de hwdecode si overlay (drawtext travaille en espace CPU)
-            hw_decode = [] if overlay_filter else hwdecode_args()
-            vf_args   = ["-vf", overlay_filter] if overlay_filter else []
+            enc_args = video_encode_args(crf, w, h)
+            extra_in, flt_args, tmp_png = overlay_args(seg_ovs, w, h, out_dir)
+            # Pas de hwdecode quand overlay (traitement CPU)
+            hw_decode = [] if has_ov else hwdecode_args()
             cmd = [
                 "ffmpeg", *hw_decode,
                 "-ss", str(start), "-to", str(end),
                 "-i", input_path,
-                *vf_args,
+                *extra_in,
+                *flt_args,
                 *enc_args,
                 "-c:a", "aac", "-b:a", DEFAULT_AUDIO_BITRATE,
                 "-movflags", "+faststart",
@@ -146,7 +147,12 @@ def cut_segments_batch(
         if on_progress:
             on_progress(int(i / total * 95))   # 0-95% pendant le traitement
 
-        _run_ffmpeg(cmd, proc_holder)
+        try:
+            _run_ffmpeg(cmd, proc_holder)
+        finally:
+            if tmp_png and os.path.isfile(tmp_png):
+                os.remove(tmp_png)
+
         output_files.append(out_path)
 
         if on_progress:

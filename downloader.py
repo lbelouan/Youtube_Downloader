@@ -2,7 +2,7 @@ import subprocess
 import os
 import json
 from config import YTDLP_FORMAT, YTDLP_MERGE_FORMAT, TEMP_DIR
-from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdecode_args, build_overlay_filter
+from ffmpeg_utils import has_videotoolbox, vt_bitrate, video_encode_args, hwdecode_args, overlay_args, _has_active_overlays
 
 
 def _subprocess_env() -> dict:
@@ -157,22 +157,25 @@ def cut_segment(input_path: str, start: str, end: str,
     Découpe un segment vidéo.
     - precise=False : stream copy (instantané, sans perte qualité, pas frame-accurate)
     - precise=True  : réencodage frame-accurate via VideoToolbox (GPU) ou libx264
-    - overlays      : liste de textes incrustés (force le réencodage si non vide)
+    - overlays      : textes incrustés — force le réencodage, stratégie auto (drawtext ou PIL)
     """
-    overlay_filter = build_overlay_filter(overlays or [])
-    force_encode   = bool(overlay_filter) or precise
+    has_ov       = _has_active_overlays(overlays or [])
+    force_encode = has_ov or precise
 
+    tmp_png = None
     if force_encode:
-        w, h        = _probe_video(input_path)
-        enc_args    = video_encode_args(18, w, h)
-        # Pas de hwdecode si overlay (drawtext travaille en espace CPU)
-        hw_decode   = [] if overlay_filter else hwdecode_args()
-        vf_args     = ["-vf", overlay_filter] if overlay_filter else []
+        w, h     = _probe_video(input_path)
+        enc_args = video_encode_args(18, w, h)
+        import os as _os
+        extra_in, flt_args, tmp_png = overlay_args(overlays or [], w, h,
+                                                    _os.path.dirname(output_path))
+        hw_decode = [] if has_ov else hwdecode_args()
         cmd = [
             "ffmpeg", *hw_decode,
             "-ss", start, "-to", end,
             "-i", input_path,
-            *vf_args,
+            *extra_in,
+            *flt_args,
             *enc_args,
             "-c:a", "aac", "-b:a", "256k",
             "-movflags", "+faststart",
@@ -188,9 +191,12 @@ def cut_segment(input_path: str, start: str, end: str,
             output_path, "-y",
         ]
 
-    result = subprocess.run(
-        cmd, check=False, capture_output=True, env=_subprocess_env()
-    )
+    try:
+        result = subprocess.run(cmd, check=False, capture_output=True, env=_subprocess_env())
+    finally:
+        if tmp_png and os.path.isfile(tmp_png):
+            os.remove(tmp_png)
+
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")
         raise RuntimeError(f"FFmpeg cut failed (code {result.returncode}):\n{stderr[-1000:]}")
@@ -199,29 +205,34 @@ def cut_segment(input_path: str, start: str, end: str,
 def apply_overlay(input_path: str, output_path: str, overlays: list):
     """
     Applique des textes incrustés sur une vidéo complète (sans découpe).
-    Utilise VideoToolbox (GPU) ou libx264 en fallback.
+    Stratégie automatique : drawtext si disponible, sinon PIL+overlay filter.
     """
-    overlay_filter = build_overlay_filter(overlays or [])
-    if not overlay_filter:
-        # Rien à faire : copie directe
+    if not _has_active_overlays(overlays or []):
         import shutil as _sh
         _sh.copy2(input_path, output_path)
         return
 
     w, h     = _probe_video(input_path)
     enc_args = video_encode_args(18, w, h)
+    tmp_dir  = os.path.dirname(output_path)
+    extra_in, flt_args, tmp_png = overlay_args(overlays, w, h, tmp_dir)
+
     cmd = [
         "ffmpeg",
         "-i", input_path,
-        "-vf", overlay_filter,
+        *extra_in,
+        *flt_args,
         *enc_args,
         "-c:a", "copy",
         "-movflags", "+faststart",
         output_path, "-y",
     ]
-    result = subprocess.run(
-        cmd, check=False, capture_output=True, env=_subprocess_env()
-    )
+    try:
+        result = subprocess.run(cmd, check=False, capture_output=True, env=_subprocess_env())
+    finally:
+        if tmp_png and os.path.isfile(tmp_png):
+            os.remove(tmp_png)
+
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")
         raise RuntimeError(f"FFmpeg overlay failed (code {result.returncode}):\n{stderr[-1000:]}")
