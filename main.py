@@ -348,11 +348,12 @@ def youtube_stream_url():
         return jsonify({"error": "URL manquante"}), 400
     try:
         import subprocess as _sp
-        from downloader import _subprocess_env
+        from downloader import _subprocess_env, _cookies_args, _ytdlp_extra_args
         # Formats combinés compatibles navigateur (pas d'AV1 — Safari ne supporte pas)
         fmt = "22/18/best[vcodec^=avc1][acodec!=none][height<=720]/best[vcodec!*=av01][acodec!=none]"
         r = _sp.run(
-            ["yt-dlp", "-f", fmt, "--get-url", "--no-playlist", url],
+            ["yt-dlp", "-f", fmt, "--get-url", "--no-playlist",
+             *_cookies_args(), *_ytdlp_extra_args(), url],
             capture_output=True, text=True, timeout=30,
             env=_subprocess_env()
         )

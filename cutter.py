@@ -182,6 +182,7 @@ def download_youtube_for_cut(
     os.makedirs(TEMP_DIR, exist_ok=True)
     out_path = os.path.join(TEMP_DIR, f"yt_cut_{int(time.time() * 1000)}.mp4")
 
+    from downloader import _cookies_args, _ytdlp_extra_args
     cmd = [
         "yt-dlp",
         "--format",              YTDLP_FORMAT,
@@ -189,6 +190,8 @@ def download_youtube_for_cut(
         "--output",              out_path,
         "--no-playlist",
         "--newline",
+        *_cookies_args(),
+        *_ytdlp_extra_args(),
         url,
     ]
 
